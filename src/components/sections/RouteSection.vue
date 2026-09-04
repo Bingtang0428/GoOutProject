@@ -1,0 +1,778 @@
+﻿<script setup>
+// ============================================================
+// 路线规划
+//  - 「列表」:时间轴逐日展示目的地
+//  - 「地图」:Leaflet(OSM) 展示整条路线,每日节点同色圆点标记,
+//    按顺序连线;缺失坐标的地点会调用 Nominatim 逆地理补全后存储
+//  - 「建议」:每个目的地可提出建议,流转 open → accepted → done 闭环
+// Props: plan / canEdit(参与者及以上才有写权限,围观者只读)
+// ============================================================
+import { ref, reactive, computed, watch, onBeforeUnmount, nextTick } from 'vue'
+import { useContentStore } from '@/stores/content'
+import { useAuthStore } from '@/stores/auth'
+import { fmtDay, dayIndex, eachDayISO } from '@/utils/date'
+import { uid, PASTEL_GRADS } from '@/utils/misc'
+import { geocodePlace, navUrl } from '@/api/geocode'
+import { fetchDailyWeather, wxMeta, wxTempText } from '@/api/weather'
+import { drivingMinutes, transitMinutes, fmtMinute } from '@/api/route'
+import BaseModal from '@/components/ui/BaseModal.vue'
+import BaseButton from '@/components/ui/BaseButton.vue'
+import BaseTag from '@/components/ui/BaseTag.vue'
+import EmptyState from '@/components/ui/EmptyState.vue'
+import Avatar from '@/components/ui/Avatar.vue'
+import 'leaflet/dist/leaflet.css'
+
+const props = defineProps({
+  plan: { type: Object, required: true },
+  canEdit: { type: Boolean, default: true }
+})
+
+const store = useContentStore()
+const auth = useAuthStore()
+
+const days = computed(() => {
+  const list = store.rowsOf(props.plan.id, 'days').slice()
+  return list.sort((a, b) => a.date.localeCompare(b.date))
+})
+const totalDest = computed(() => days.value.reduce((n, d) => n + (d.destinations?.length || 0), 0))
+
+/* ---------------- 列表与地图切换 ---------------- */
+const view = ref('list')
+const mapEl = ref(null)
+let map = null
+let routeLayer = null
+
+function flushMap() {
+  if (map) setTimeout(() => map.invalidateSize(), 60)
+}
+
+let Lmod = null // Leaflet 模块单例
+async function getL() {
+  if (!Lmod) Lmod = await import('leaflet')
+  return Lmod
+}
+
+async function enterMap() {
+  view.value = 'map'
+  await nextTick()
+  if (!mapEl.value || map) return
+  const L = await getL()
+  map = L.map(mapEl.value, { zoomControl: true, attributionControl: true }).setView([30.9, 118.6], 8)
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+  }).addTo(map)
+  routeLayer = L.layerGroup().addTo(map)
+  await paintRoute()
+}
+
+async function leaveMap() {
+  view.value = 'list'
+  if (map) {
+    map.remove()
+    map = null
+    routeLayer = null
+  }
+}
+
+/** 平整所有日期下的地点,生成 [dayIdx, day, dest] 序列 */
+function flattenDests() {
+  const out = []
+  days.value.forEach((day, di) => {
+    ;(day.destinations || []).forEach((d) => out.push({ di, day, dest: d }))
+  })
+  return out
+}
+
+/* ---------------- 路段时长自动计算(自驾 OSRM / 公交估算) ---------------- */
+const calcBusy = reactive({}) // destId -> true
+
+async function coordOf(dest, day) {
+  if (dest?.lat && dest?.lng) return { lat: dest.lat, lng: dest.lng }
+  const c = await geocodePlace(dest.place)
+  if (c) await store.updateDestinationFields(props.plan.id, day.date, dest.id, { lat: c.lat, lng: c.lng })
+  return c
+}
+
+/** 自动计算“上一站 → 本站”的自驾与公交时长并写回 */
+async function autoCalcLeg(day, dest) {
+  if (calcBusy[dest.id]) return
+  const items = flattenDests()
+  const idx = items.findIndex((it) => it.dest.id === dest.id)
+  if (idx <= 0) return // 全程首站没有上一站
+  calcBusy[dest.id] = true
+  try {
+    const prevItem = items[idx - 1]
+    const a = await coordOf(prevItem.dest, prevItem.day)
+    const b = await coordOf(dest, day)
+    if (!a || !b) return
+    const drive = await drivingMinutes(a, b)
+    const transit = transitMinutes(drive)
+    if (!drive) return
+    await store.updateDestinationFields(props.plan.id, day.date, dest.id, {
+      drive_min: drive,
+      transit_min: transit
+    })
+    if (view.value === 'map') drawSegments() // 地图同步刷新路段
+  } finally {
+    delete calcBusy[dest.id]
+  }
+}
+
+const escapeHtml = (s = '') =>
+  String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+
+/* 地图路段配色:按所属天着色;跨天路段用深色虚线区分 */
+const SEG_COLORS = ['#B75973', '#D98A5B', '#2FA184', '#E76F90', '#8B5FC7']
+
+async function paintRoute() {
+  if (!map || !routeLayer) return
+  const items = flattenDests()
+  const have = (d) => typeof d.lat === 'number' && typeof d.lng === 'number'
+  const lack = items.filter((it) => !have(it.dest))
+  geoMissing.value = lack.length
+
+  // 逐条补全缺失坐标(Sequential,失败跳过)
+  for (const it of lack) {
+    const c = await geocodePlace(it.dest.place)
+    if (c && map) {
+      await store.updateDestinationFields(props.plan.id, it.day.date, it.dest.id, { lat: c.lat, lng: c.lng })
+      geoMissing.value--
+    }
+  }
+  await drawSegments()
+}
+
+/** 按顺序把 单天/跨天 自驾路段画到地图上 */
+async function drawSegments() {
+  if (!map || !routeLayer) return
+  const L = await getL()
+  routeLayer.clearLayers()
+  const items = flattenDests().filter((it) => typeof it.dest.lat === 'number' && typeof it.dest.lng === 'number')
+  items.forEach((it) => addMarker(L, it))
+  const pts = items.map((it) => [it.dest.lat, it.dest.lng])
+  for (let i = 1; i < items.length; i++) {
+    const prev = items[i - 1]
+    const cur = items[i]
+    const cross = prev.di !== cur.di // 跨天自驾路段
+    const color = cross ? '#7a4455' : SEG_COLORS[prev.di % SEG_COLORS.length]
+    const seg = L.polyline([pts[i - 1], pts[i]], {
+      color,
+      weight: cross ? 2.5 : 4,
+      opacity: cross ? 0.55 : 0.85,
+      dashArray: cross ? '5 8' : null,
+      interactive: true
+    }).addTo(routeLayer)
+    if (cur.dest.drive_min || cur.dest.transit_min) {
+      const parts = []
+      if (cur.dest.drive_min) parts.push(`自驾约 ${fmtMinute(cur.dest.drive_min)}`)
+      if (cur.dest.transit_min) parts.push(`公交约 ${fmtMinute(cur.dest.transit_min)}`)
+      if (parts.length) {
+        seg.bindTooltip(
+          `<b>${escapeHtml(prev.dest.place)}</b> → <b>${escapeHtml(cur.dest.place)}</b><br/>` +
+            parts.map(escapeHtml).join(' · ') +
+            (cross ? '<br/><span style="color:#7a4455">跨天路段</span>' : ''),
+          { direction: 'top', opacity: 0.92 }
+        )
+      }
+    }
+  }
+  if (pts.length === 1) {
+    const p = items[0].dest
+    map.setView([p.lat, p.lng], 14)
+  } else if (pts.length > 1) {
+    map.fitBounds(L.latLngBounds(pts).pad(0.25), { padding: [44, 44] })
+  }
+}
+
+function addMarker(L, { di, day, dest }) {
+  const [c1, c2] = PASTEL_GRADS[di % PASTEL_GRADS.length]
+  const popup = L.popup({ maxWidth: 260, offset: [0, -6] }).setContent(
+    `<div class="rt-pop">
+       <div class="rt-pop-title">D${dayIndex(props.plan.start_date, day.date)} · ${escapeHtml(dest.place)}</div>
+       <div class="rt-pop-sub">${escapeHtml(fmtDay(day.date))}${dest.time ? ' · ' + escapeHtml(dest.time) : ''}</div>
+       ${dest.note ? `<div class="rt-pop-note">${escapeHtml(dest.note)}</div>` : ''}
+       <a class="rt-pop-link" target="_blank" rel="noopener" href="${escapeHtml(navUrl(dest.place))}">打开导航 ↗</a>
+     </div>`
+  )
+  L.marker([dest.lat, dest.lng], {
+    icon: L.divIcon({
+      className: 'rt-dot-wrap',
+      html: `<span class="rt-dot" style="background:linear-gradient(135deg,${c1},${c2});color:#8a2b45">D${di + 1}</span>`
+    }),
+    iconSize: [26, 26],
+    iconAnchor: [13, 26]
+  })
+    .addTo(routeLayer)
+    .bindPopup(popup)
+}
+const geoMissing = ref(0)
+
+watch(
+  () => props.plan?.id,
+  () => {
+    // 切换计划后回到列表视图,避免地图与旧数据竞态
+    if (map) {
+      map.remove()
+      map = null
+      routeLayer = null
+      geoMissing.value = 0
+    }
+    view.value = 'list'
+  }
+)
+onBeforeUnmount(() => {
+  if (map) map.remove()
+  map = null
+})
+
+/* ---------------- 添加目的地 ---------------- */
+const showAdd = ref(false)
+const destForm = reactive({ date: '', place: '', time: '', note: '', driveMin: '' })
+
+function openAdd(date) {
+  destForm.date = date || days.value[0]?.date || props.plan.start_date
+  destForm.place = ''
+  destForm.time = ''
+  destForm.note = ''
+  destForm.driveMin = ''
+  showAdd.value = true
+}
+
+function chooseFirstFreeDay() {
+  const free = days.value.find((d) => !(d.destinations || []).length)
+  openAdd(free?.date)
+}
+
+async function saveDest() {
+  if (!destForm.place.trim() || !destForm.date) return
+  const destId = uid('x')
+  await store.addDestination(props.plan.id, destForm.date, {
+    id: destId,
+    place: destForm.place.trim(),
+    time: destForm.time || '',
+    note: destForm.note.trim(),
+    drive_min: destForm.driveMin ? Number(destForm.driveMin) : null
+  })
+  showAdd.value = false
+  // 后台补坐标,让地图打开即有位置
+  const c = await geocodePlace(destForm.place.trim())
+  if (c && props.plan) {
+    await store.updateDestinationFields(props.plan.id, destForm.date, destId, { lat: c.lat, lng: c.lng })
+  }
+}
+
+async function onTitleChange(day, e) {
+  await store.updateDayTitle(props.plan.id, day.date, e.target.value)
+}
+
+async function onRemoveDest(day, d) {
+  // 同时清掉挂在该目的地下的建议评论
+  for (const c of commentsOf(props.plan.id, day.date, d.id)) {
+    if (c.status !== 'done') store.removeComment(props.plan.id, c.id)
+  }
+  await store.removeDestination(props.plan.id, day.date, d.id)
+}
+
+const segDates = computed(() =>
+  days.value.length ? days.value.map((d) => d.date) : eachDayISO(props.plan.start_date, props.plan.end_date)
+)
+const segLabel = (date, i) => `第${i + 1}天 · ${fmtDay(date, false)}`
+
+/* ---------------- 建议评论(采纳闭环) ---------------- */
+const comments = computed(() => store.rowsOf(props.plan.id, 'comments'))
+const openFor = ref(null) // 'date|destId'
+const draft = reactive({})
+
+const commentsOf = (planId, date, destId) =>
+  comments.value.filter((c) => c.day_date === date && c.dest_id === destId).sort((a, b) => a.created_at.localeCompare(b.created_at))
+
+function toggleComments(date, destId) {
+  const key = `${date}|${destId}`
+  openFor.value = openFor.value === key ? null : key
+  draft[key] = ''
+}
+
+async function postComment(date, destId) {
+  const key = `${date}|${destId}`
+  const text = (draft[key] || '').trim()
+  if (!text) return
+  await store.addComment(props.plan.id, {
+    day_date: date,
+    dest_id: destId,
+    text,
+    author: { id: auth.user?.id, name: auth.user?.name }
+  })
+  draft[key] = ''
+}
+
+const me = () => auth.user || {}
+
+function ago(iso) {
+  if (!iso) return ''
+  const diff = Math.round((Date.now() - new Date(iso).getTime()) / 86400000)
+  if (diff <= 0) return '今天'
+  if (diff === 1) return '昨天'
+  if (diff < 30) return `${diff} 天前`
+  return fmtDay(iso.slice(0, 10), false)
+}
+
+/* 状态样式映射 */
+const statusMeta = {
+  open: { tone: 'amber', text: '待采纳', icon: 'fa-lightbulb' },
+  accepted: { tone: 'brand', text: '已采纳 · 待落实', icon: 'fa-circle-check' },
+  done: { tone: 'success', text: '已落实 · 闭环', icon: 'fa-circle-check' }
+}
+
+function canRemoveComment(c) {
+  return (
+    props.canEdit &&
+    (c.status === 'open' || c.status === 'accepted') &&
+    (c.author?.id === me().id || c.author?.name === me().name)
+  )
+}
+
+/* ---------------- 天气(按日,取当天首个有坐标的地点) ---------------- */
+const wx = reactive({}) // date -> {min,max,code} | 'pending'
+const wxTried = reactive({}) // date -> true(已尝试,避免反复失败重试)
+let wxScanner = null
+
+function firstCoordOf(day) {
+  return (day.destinations || []).find((d) => typeof d.lat === 'number' && typeof d.lng === 'number')
+}
+
+async function ensureWeather(dateISO, force = false) {
+  if (wx[dateISO] && !force) return
+  if (!force && wxTried[dateISO]) return
+  wxTried[dateISO] = true
+  wx[dateISO] = 'pending'
+  const day = days.value.find((d) => d.date === dateISO)
+  let spot = day && firstCoordOf(day)
+  if (day && !spot) {
+    const first = day.destinations?.[0]
+    if (first) {
+      const c = await geocodePlace(first.place)
+      if (c && props.plan) {
+        await store.updateDestinationFields(props.plan.id, dateISO, first.id, { lat: c.lat, lng: c.lng })
+        spot = { ...first, ...c }
+      }
+    }
+  }
+  const data = spot ? await fetchDailyWeather(spot.lat, spot.lng, dateISO) : null
+  wx[dateISO] = data || null
+}
+
+/** 内容就绪后逐个日期排队拉取(约 0.4s/日,避免触发限流) */
+function scheduleWeatherScan() {
+  if (wxScanner) clearTimeout(wxScanner)
+  wxScanner = setTimeout(async () => {
+    for (const day of days.value) {
+      if (day.destinations?.length) await ensureWeather(day.date)
+      await new Promise((r) => setTimeout(r, 350))
+    }
+  }, 500)
+}
+
+watch(
+  () => props.plan?.id,
+  () => {
+    for (const k of Object.keys(wx)) delete wx[k]
+    for (const k of Object.keys(wxTried)) delete wxTried[k]
+  }
+)
+
+watch(
+  () => days.value.filter((d) => (d.destinations || []).length).length,
+  (n) => n > 0 && scheduleWeatherScan(),
+  { immediate: true }
+)
+</script>
+
+<template>
+  <section>
+    <div class="mb-6 flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <h2 class="title-1 flex items-center gap-3">
+          <i class="fa-solid fa-route text-[19px] text-primary" aria-hidden="true"></i>
+          路线规划
+          <span v-if="totalDest" class="chip chip-brand">{{ totalDest }} 个地点</span>
+        </h2>
+        <p class="muted mt-1">每日行程一目了然,打开地图查看整条路线</p>
+      </div>
+      <div class="flex items-center gap-2">
+        <!-- 列表 / 地图 切换 -->
+        <div class="card flex gap-1 !rounded-pill !p-1">
+          <button
+            class="flex items-center gap-1.5 rounded-full px-4 py-1.5 text-[13px] font-semibold transition-all duration-250 ease-out active:scale-95"
+            :class="view === 'list' ? 'bg-primary text-white shadow-md' : 'text-muted hover:text-primary'"
+            @click="leaveMap()"
+          >
+            <i class="fa-solid fa-list-ul" aria-hidden="true"></i>列表
+          </button>
+          <button
+            class="flex items-center gap-1.5 rounded-full px-4 py-1.5 text-[13px] font-semibold transition-all duration-250 ease-out active:scale-95"
+            :class="view === 'map' ? 'bg-primary text-white shadow-md' : 'text-muted hover:text-primary'"
+            @click="enterMap()"
+          >
+            <i class="fa-solid fa-map" aria-hidden="true"></i>地图
+          </button>
+        </div>
+        <BaseButton v-if="canEdit" icon="fa-plus" @click="chooseFirstFreeDay()">添加地点</BaseButton>
+      </div>
+    </div>
+
+    <!-- ============ 地图视图 ============ -->
+    <div v-if="view === 'map'" class="fade-up">
+      <div class="card relative overflow-hidden !rounded-card">
+        <div ref="mapEl" class="h-[440px] w-full sm:h-[540px]"></div>
+        <span v-if="geoMissing" class="chip chip-amber absolute left-4 top-4 z-[500] shadow-sm">
+          <i class="fa-solid fa-magnifying-glass-location" aria-hidden="true"></i>
+          正在定位 {{ geoMissing }} 个地点…
+        </span>
+        <div class="absolute bottom-3 left-4 z-[500] flex gap-2 rounded-[12px] bg-surface/85 px-3 py-2 backdrop-blur">
+          <span class="text-[11px] font-semibold text-muted">图例</span>
+          <span v-for="(d, di) in days" :key="d.id || d.date" class="flex items-center gap-1 text-[11px] text-ink-soft">
+            <i class="fa-solid fa-circle text-[8px]" :style="{ color: PASTEL_GRADS[di % PASTEL_GRADS.length][0] }" aria-hidden="true"></i>
+            D{{ di + 1 }}
+          </span>
+          <span class="flex items-center gap-1 text-[11px] text-ink-soft">
+            <span class="inline-block h-0 w-4 border-t-2 border-dashed border-[#7a4455]"></span>跨天路段
+          </span>
+        </div>
+      </div>
+      <p class="muted mt-3 text-center text-[12px]">
+        地图由 OpenStreetMap 提供;点击「添加地点」后可在地图中查看实时同步
+      </p>
+    </div>
+
+    <!-- ============ 列表视图(时间轴) ============ -->
+    <div v-else class="space-y-10">
+      <div v-if="days.length">
+        <div v-for="(day, i) in days" :key="day.id || day.date" class="fade-up relative pl-11" style="animation: fade-up 0.35s ease-out both">
+          <span
+            class="absolute left-0 top-1.5 z-10 flex items-center justify-center rounded-full text-[10px] font-bold text-white ring-4"
+            :class="i === 0 ? 'bg-primary' : 'bg-primary-deep/70'"
+            :style="{ width: '26px', height: '26px', boxShadow: '0 4px 12px rgb(183 89 115 / 0.4)' }"
+          >
+            D{{ dayIndex(plan.start_date, day.date) }}
+          </span>
+          <span v-if="i < days.length - 1" class="absolute bottom-[-34px] left-[13px] top-11 w-px bg-primary/15"></span>
+
+          <article class="card p-0">
+            <header class="flex flex-wrap items-center gap-x-4 gap-y-2 px-6 pb-4 pt-5">
+              <span class="text-[13px] font-semibold text-ink">{{ fmtDay(day.date) }}</span>
+              <input
+                v-if="canEdit"
+                :value="day.title"
+                class="inline-title"
+                :placeholder="`第${dayIndex(plan.start_date, day.date)}天 · 给今天起个主题`"
+                @change="onTitleChange(day, $event)"
+              />
+              <span v-else class="flex-1 truncate text-[14.5px] font-semibold text-ink-soft">{{ day.title || `第${dayIndex(plan.start_date, day.date)}天` }}</span>
+              <span v-if="day.destinations?.length" class="ml-auto muted text-[12px]">{{ day.destinations.length }} 站</span>
+              <!-- 当日天气(首个地点所在地) -->
+              <button
+                v-if="day.destinations?.length"
+                class="chip chip-plain transition-all duration-200 hover:!bg-amber/20"
+                title="天气为目的地所在位置预报,点击刷新"
+                @click="ensureWeather(day.date, true)"
+              >
+                <template v-if="wx[day.date] && wx[day.date] !== 'pending'">
+                  <i :class="`fa-solid ${wxMeta(wx[day.date].code).icon} text-amber`" aria-hidden="true"></i>
+                  {{ wxTempText(wx[day.date]) }}
+                  <span class="muted !text-[11px]">{{ wxMeta(wx[day.date].code).label }}</span>
+                </template>
+                <template v-else-if="wx[day.date] === 'pending'">
+                  <i class="fa-solid fa-circle-notch" style="animation: spin 0.9s linear infinite" aria-hidden="true"></i>
+                  <span class="muted !text-[11px]">天气</span>
+                </template>
+                <template v-else>
+                  <i class="fa-solid fa-cloud" aria-hidden="true"></i>
+                  <span class="muted !text-[11px]">暂无预报</span>
+                </template>
+              </button>
+            </header>
+
+            <div v-if="day.destinations?.length" class="divide-y divide-line/60">
+              <div v-for="d in day.destinations" :key="d.id">
+                <div class="grid grid-cols-[64px_1fr] items-start gap-x-3 px-6 py-3 transition-colors duration-200 sm:grid-cols-[72px_1fr_auto] hover:bg-surface-2/60">
+                  <span class="pt-0.5 text-[12.5px] font-semibold text-primary/80 tabular-nums">
+                    {{ d.time || '全天' }}
+                  </span>
+                  <div class="min-w-0">
+                    <p class="flex items-center gap-2 text-[14.5px] font-medium text-ink">
+                      <i class="fa-solid fa-location-dot text-[11px] text-primary/60" aria-hidden="true"></i>
+                      {{ d.place }}
+                    </p>
+                    <p v-if="d.note" class="mt-0.5 text-[12.5px] leading-relaxed text-muted">{{ d.note }}</p>
+                    <!-- 路段时长:自驾 / 公交,支持手动填写或「自动计算」 -->
+                    <div v-if="canEdit" class="mt-1 flex flex-wrap items-center gap-1.5">
+                      <i class="fa-solid fa-car-side text-[10px] text-primary/50" aria-hidden="true"></i>
+                      <input
+                        type="number"
+                        min="1"
+                        class="drive-min-input"
+                        :value="d.drive_min ?? ''"
+                        placeholder="自驾?分"
+                        title="从上一站自驾到这里大约多少分钟"
+                        @change="(e) => store.updateDestinationFields(plan.id, day.date, d.id, { drive_min: e.target.value ? Number(e.target.value) : null })"
+                      />
+                      <i class="fa-solid fa-bus-simple text-[10px] text-amber/80" aria-hidden="true"></i>
+                      <input
+                        type="number"
+                        min="1"
+                        class="drive-min-input"
+                        :value="d.transit_min ?? ''"
+                        placeholder="公交?分"
+                        title="公共交通大约多少分钟(自动为估算值)"
+                        @change="(e) => store.updateDestinationFields(plan.id, day.date, d.id, { transit_min: e.target.value ? Number(e.target.value) : null })"
+                      />
+                      <button
+                        class="btn btn-soft btn-sm !px-2.5 !py-0.5 !text-[11px]"
+                        title="按地图路线自动计算自驾时长,并估算公交时长"
+                        @click="autoCalcLeg(day, d)"
+                      >
+                        <i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i>自动算时长
+                      </button>
+                    </div>
+                    <p v-else-if="d.drive_min || d.transit_min" class="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11.5px] text-muted/80">
+                      <template v-if="d.drive_min">
+                        <span><i class="fa-solid fa-car-side text-[10px]" aria-hidden="true"></i> 自驾约 {{ fmtMinute(d.drive_min) }}</span>
+                      </template>
+                      <template v-if="d.transit_min">
+                        <span><i class="fa-solid fa-bus-simple text-[10px]" aria-hidden="true"></i> 公交约 {{ fmtMinute(d.transit_min) }}</span>
+                      </template>
+                    </p>
+                  </div>
+                  <div class="col-span-2 flex items-center gap-1 pt-1 pl-[76px] sm:col-span-1 sm:pl-0 sm:pt-0">
+                    <button
+                      class="btn btn-ghost btn-sm !px-2.5"
+                      @click="toggleComments(day.date, d.id)"
+                      :class="openFor === `${day.date}|${d.id}` ? '!text-primary !border-primary/50' : ''"
+                    >
+                      <i class="fa-regular fa-message text-[11px]" aria-hidden="true"></i>
+                      建议{{ commentsOf(plan.id, day.date, d.id).length ? ` ${commentsOf(plan.id, day.date, d.id).length}` : '' }}
+                    </button>
+                    <a class="btn btn-ghost btn-sm !px-2.5" :href="navUrl(d.place)" target="_blank" rel="noopener" title="打开导航">
+                      <i class="fa-solid fa-location-arrow text-[11px]" aria-hidden="true"></i>导航
+                    </a>
+                    <button v-if="canEdit" class="icon-btn icon-btn-danger" :title="`移除 ${d.place}`" @click="onRemoveDest(day, d)">
+                      <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+                    </button>
+                  </div>
+                </div>
+
+                <!-- 建议评论面板 -->
+                <Transition name="fade">
+                  <div v-if="openFor === `${day.date}|${d.id}`" class="border-t border-line/60 bg-surface-2/40 px-6 py-4">
+                    <div v-if="commentsOf(plan.id, day.date, d.id).length" class="space-y-3">
+                      <div v-for="c in commentsOf(plan.id, day.date, d.id)" :key="c.id" class="card flex gap-3 p-4" :class="c.status === 'done' ? 'opacity-70' : ''">
+                        <Avatar :name="c.author?.name" :size="30" />
+                        <div class="min-w-0 flex-1">
+                          <div class="mb-1 flex flex-wrap items-center gap-2">
+                            <span class="text-[12.5px] font-semibold text-ink">{{ c.author?.name }}</span>
+                            <span class="muted text-[11px]">{{ ago(c.created_at) }}</span>
+                            <BaseTag :tone="statusMeta[c.status].tone" :icon="statusMeta[c.status].icon" class="!px-2 !text-[11px]">
+                              {{ statusMeta[c.status].text }}
+                              <template v-if="c.status === 'accepted' || c.status === 'done'">
+                                · {{ c.accepted_by?.name }}
+                              </template>
+                            </BaseTag>
+                          </div>
+                          <p class="text-[13.5px] leading-relaxed text-ink-soft">{{ c.text }}</p>
+                          <div class="mt-2 flex flex-wrap items-center gap-2 text-[11.5px]">
+                            <template v-if="c.status === 'done'">
+                              <span class="muted">{{ c.accepted_at ? `采纳于 ${ago(c.accepted_at)}` : '' }}{{ c.done_at ? ` · 落实于 ${ago(c.done_at)}` : '' }}</span>
+                            </template>
+                            <!-- 参与者可按状态推进闭环 -->
+                            <template v-else-if="canEdit">
+                              <button
+                                v-if="c.status === 'open'"
+                                class="chip chip-brand cursor-pointer transition-all duration-200 active:scale-95"
+                                @click="store.adoptComment(plan.id, c.id, { id: auth.user?.id, name: auth.user?.name })"
+                              >
+                                <i class="fa-solid fa-check" aria-hidden="true"></i>采纳这条建议
+                              </button>
+                              <button
+                                v-if="c.status === 'accepted'"
+                                class="chip chip-success cursor-pointer transition-all duration-200 active:scale-95"
+                                @click="store.completeComment(plan.id, c.id)"
+                              >
+                                <i class="fa-solid fa-check-double" aria-hidden="true"></i>已落实,闭环
+                              </button>
+                              <button
+                                v-if="c.status === 'accepted'"
+                                class="chip chip-plain cursor-pointer transition-all duration-200 active:scale-95"
+                                @click="store.reopenComment(plan.id, c.id)"
+                              >
+                                重新打开
+                              </button>
+                              <button
+                                v-if="canRemoveComment(c)"
+                                class="icon-btn icon-btn-danger !h-7 !w-7 ml-1"
+                                title="删除这条建议"
+                                @click="store.removeComment(plan.id, c.id)"
+                              >
+                                <i class="fa-solid fa-trash-can text-[11px]" aria-hidden="true"></i>
+                              </button>
+                            </template>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <p v-else-if="!canEdit" class="muted text-[12.5px] italic">还没有人提建议</p>
+                    <!-- 发表建议(围观者隐藏) -->
+                    <div v-if="canEdit" class="mt-3 flex gap-2">
+                      <input
+                        v-model="draft[`${day.date}|${d.id}`]"
+                        class="field flex-1 !py-2 text-[13px]"
+                        placeholder="给这个地点提个建议 / 发表意见…"
+                        maxlength="120"
+                        @keyup.enter="postComment(day.date, d.id)"
+                      />
+                      <BaseButton size="sm" :disabled="!(draft[`${day.date}|${d.id}`] || '').trim()" @click="postComment(day.date, d.id)">
+                        提交
+                      </BaseButton>
+                    </div>
+                  </div>
+                </Transition>
+              </div>
+            </div>
+
+            <p v-else class="px-6 py-5 text-[13px] italic text-muted">
+              这一天还没有安排 ——
+              <button v-if="canEdit" class="font-semibold text-primary not-italic hover:underline" @click="openAdd(day.date)">
+                点击添加第一个目的地
+              </button>
+            </p>
+
+            <footer v-if="canEdit && day.destinations?.length" class="px-6 pb-4">
+              <button
+                class="w-full rounded-[12px] border border-dashed border-line py-2 text-[12.5px] font-semibold text-muted transition-all duration-200 ease-out hover:border-primary/40 hover:text-primary active:scale-[0.98]"
+                @click="openAdd(day.date)"
+              >
+                <i class="fa-solid fa-plus mr-1.5 text-[11px]" aria-hidden="true"></i>添加目的地
+              </button>
+            </footer>
+          </article>
+        </div>
+      </div>
+    </div>
+
+    <EmptyState
+      v-if="view === 'list' && !days.length"
+      icon="fa-map"
+      title="路线还没开始规划"
+      desc="先选一天,把想去的打卡点按顺序排进时间轴"
+    >
+      <BaseButton v-if="canEdit" icon="fa-plus" @click="openAdd()">添加第一个地点</BaseButton>
+    </EmptyState>
+
+    <!-- 新增目的地弹窗 -->
+    <BaseModal v-model="showAdd" title="添加目的地" :max-width="'480px'">
+      <div class="space-y-5">
+        <div>
+          <label class="flabel">安排在哪一天</label>
+          <div class="flex flex-wrap gap-2">
+            <button
+              v-for="(date, i) in segDates"
+              :key="date"
+              type="button"
+              class="chip transition-all duration-200 ease-out active:scale-95"
+              :class="destForm.date === date ? 'chip-brand' : 'chip-plain hover:!bg-primary/10'"
+              @click="destForm.date = date"
+            >
+              {{ segLabel(date, i) }}
+            </button>
+          </div>
+        </div>
+        <div>
+          <label class="flabel">地点名称 *</label>
+          <input v-model="destForm.place" class="field" placeholder="例如:屯溪老街停车场" maxlength="40" />
+        </div>
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="flabel">时间(可选)</label>
+            <input v-model="destForm.time" type="time" class="field" />
+          </div>
+          <div class="flex items-end pb-1 text-[12px] text-muted">
+            <i class="fa-solid fa-lightbulb mr-1.5 text-amber" aria-hidden="true"></i>
+            到达大致时刻,留空显示「全天」
+          </div>
+        </div>
+        <div>
+          <label class="flabel">备注</label>
+          <textarea v-model="destForm.note" class="field" rows="3" placeholder="停车建议 / 门票提醒 / 同伴任务…"></textarea>
+        </div>
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="flabel">自驾路段(距上一站,分钟)</label>
+            <input v-model.number="destForm.driveMin" type="number" min="1" class="field" placeholder="例如 80" />
+          </div>
+          <div class="flex items-end pb-1 text-[12px] leading-5 text-muted">
+            <i class="fa-solid fa-car-side mr-1.5 mt-0.5 text-amber" aria-hidden="true"></i>
+            自驾从上一个地点开到这里的时间,用于行程单与地图展示
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <BaseButton variant="ghost" @click="showAdd = false">取消</BaseButton>
+        <BaseButton icon="fa-check" :disabled="!destForm.place.trim()" @click="saveDest">加入行程</BaseButton>
+      </template>
+    </BaseModal>
+  </section>
+</template>
+
+<style scoped>
+.inline-title {
+  flex: 1;
+  min-width: 120px;
+  background: transparent;
+  border: 1px dashed transparent;
+  border-radius: 8px;
+  padding: 3px 8px;
+  font-size: 14.5px;
+  font-weight: 600;
+  color: rgb(var(--c-ink));
+  outline: none;
+  transition: border-color 0.2s ease-out;
+}
+.inline-title:hover { border-color: rgb(var(--c-line)); }
+.inline-title:focus { border-color: rgb(var(--c-primary) / 0.5); }
+.drive-min-input {
+  width: 9rem;
+  background: transparent;
+  border: 1px dashed transparent;
+  border-radius: 8px;
+  padding: 1px 8px;
+  font-size: 11.5px;
+  color: rgb(var(--c-ink-soft));
+  outline: none;
+  transition: border-color 0.2s ease-out;
+}
+.drive-min-input::placeholder { color: rgb(var(--c-muted)); opacity: 0.7; }
+.drive-min-input:hover { border-color: rgb(var(--c-line)); }
+.drive-min-input:focus { border-color: rgb(var(--c-primary) / 0.5); width: 9.5rem; }
+</style>
+
+<style>
+/* Leaflet 弹窗与标记样式(全局,因挂载在 .leaflet-popup 内) */
+.rt-pop-title { font-weight: 700; font-size: 14px; color: #8a2b45; }
+.rt-pop-sub { font-size: 12px; color: #a2727e; margin-top: 2px; }
+.rt-pop-note { font-size: 12px; margin-top: 6px; line-height: 1.5; color: #7b5a64; }
+.rt-pop-link { display: inline-block; margin-top: 8px; font-size: 12px; font-weight: 700; color: #b75973; }
+.rt-dot-wrap { background: transparent; border: none; }
+.rt-dot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  box-shadow: 0 2px 8px rgba(183, 89, 115, 0.45), 0 0 0 3px #fff;
+}
+.leaflet-container { font-family: inherit; }
+.leaflet-popup-content-wrapper { border-radius: 14px; box-shadow: 0 8px 30px rgba(80, 40, 55, 0.16); }
+</style>
