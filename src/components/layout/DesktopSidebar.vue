@@ -91,8 +91,8 @@ function logout() {
         @click="goPlan(p.id)"
       >
         <div class="mb-1.5 flex items-center justify-between gap-2">
-          <p class="truncate text-[14px] font-semibold text-ink">{{ p.name }}</p>
-          <span class="chip !px-2 !py-0.5 text-[10.5px]" :class="statusOf(p).tone">
+          <p class="min-w-0 truncate text-[14px] font-semibold text-ink">{{ p.name }}</p>
+          <span class="chip shrink-0 whitespace-nowrap !px-2 !py-0.5 text-[10.5px]" :class="statusOf(p).tone">
             {{ statusOf(p).text }}
           </span>
         </div>

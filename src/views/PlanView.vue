@@ -74,6 +74,7 @@ const activeSec = computed(() => {
 function goSec(key) {
   if (key === activeSec.value) return
   router.replace({ path: `/plan/${route.params.id}`, query: key === 'route' ? {} : { sec: key } })
+  window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
 // —— 计划内容载入 + 实时订阅(切计划时释放旧通道)

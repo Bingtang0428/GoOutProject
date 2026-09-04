@@ -15,6 +15,7 @@ import EmptyState from '@/components/ui/EmptyState.vue'
 import Avatar from '@/components/ui/Avatar.vue'
 import BudgetPanel from './BudgetPanel.vue'
 import VehiclePanel from './VehiclePanel.vue'
+import { money } from '@/utils/money'
 
 const props = defineProps({
   plan: { type: Object, required: true },
@@ -186,10 +187,6 @@ const transferPlan = computed(() => {
 const totalAmount = computed(() => bills.value.reduce((s, b) => s + Number(b.amount || 0), 0))
 
 const catOf = (key) => CATS.find((c) => c.key === key) || CATS[CATS.length - 1]
-
-function money(n) {
-  return `¥${Number(n || 0).toLocaleString('zh-CN', { maximumFractionDigits: 2 })}`
-}
 
 /** 显示名称;若成员已离开计划则取快照 */
 const whoName = (ref) => ref?.name || '未知'

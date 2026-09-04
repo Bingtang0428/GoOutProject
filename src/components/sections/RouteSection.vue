@@ -52,22 +52,59 @@ async function getL() {
   return Lmod
 }
 
+/* 底图源:国内网络下 OSM 瓦片常被屏蔽,自动回退到 CARTO / Esri */
+const TILE_PROVIDERS = [
+  {
+    url: 'https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>'
+  },
+  {
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
+    attribution: '&copy; Esri, TomTom, Garmin'
+  }
+]
+const mapStatus = ref('') // 底图/加载状态提示
+let tileFailTimer = null
+
+function switchTile(L, failMsg = true) {
+  if (!map || !L || !TILE_PROVIDERS.length) return
+  const next = TILE_PROVIDERS.shift()
+  if (!next) {
+    mapStatus.value = '底图加载失败,请检查网络后重新打开地图'
+    return
+  }
+  const layer = L.tileLayer(next.url, { maxZoom: 19, attribution: next.attribution }).addTo(map)
+  let failedOnce = false
+  layer.on('tileerror', () => {
+    if (failedOnce) return
+    failedOnce = true
+    if (map) map.removeLayer(layer)
+    if (failMsg) mapStatus.value = '切换底图源中…'
+    setTimeout(() => switchTile(L), 80)
+  })
+  clearTimeout(tileFailTimer)
+  tileFailTimer = setTimeout(() => {
+    // 加载超时兜底:再换一个源
+    if (map && TILE_PROVIDERS.length) switchTile(L)
+  }, 9000)
+}
+
 async function enterMap() {
   view.value = 'map'
   await nextTick()
   if (!mapEl.value || map) return
   const L = await getL()
+  mapStatus.value = '地图加载中…'
   map = L.map(mapEl.value, { zoomControl: true, attributionControl: true }).setView([30.9, 118.6], 8)
-  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19,
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-  }).addTo(map)
+  switchTile(L, false)
   routeLayer = L.layerGroup().addTo(map)
   await paintRoute()
+  mapStatus.value = ''
 }
 
 async function leaveMap() {
   view.value = 'list'
+  clearTimeout(tileFailTimer)
   if (map) {
     map.remove()
     map = null
@@ -86,37 +123,98 @@ function flattenDests() {
 
 /* ---------------- 路段时长自动计算(自驾 OSRM / 公交估算) ---------------- */
 const calcBusy = reactive({}) // destId -> true
+const extras = new Map() // 只读视角下仅本地展示的临时坐标 destId -> {lat,lng}
+const autoRounds = reactive({}) // planId -> 自动重试轮数
+const autoRun = ref(false) // 是否正在后台批量计算
+const legNote = ref('')
+let noteTimer = null
+let autoTimer = null
 
-async function coordOf(dest, day) {
-  if (dest?.lat && dest?.lng) return { lat: dest.lat, lng: dest.lng }
-  const c = await geocodePlace(dest.place)
-  if (c) await store.updateDestinationFields(props.plan.id, day.date, dest.id, { lat: c.lat, lng: c.lng })
+/** 写坐标:围观者(只读)只放临时缓存不落库 */
+function persistCoord(it, c) {
+  if (!c) return
+  extras.set(it.dest.id, c)
+  if (props.canEdit) {
+    store.updateDestinationFields(props.plan.id, it.day.date, it.dest.id, { lat: c.lat, lng: c.lng })
+  }
+}
+
+/** 目的地有效坐标(库内数值优先,其次本会话临时定位) */
+function effCoord(dest) {
+  if (typeof dest?.lat === 'number' && typeof dest?.lng === 'number') return { lat: dest.lat, lng: dest.lng }
+  return extras.get(dest?.id) || null
+}
+
+async function coordOf(it) {
+  const have = effCoord(it.dest)
+  if (have) return have
+  const c = await geocodePlace(it.dest.place, { hint: props.plan.start_city })
+  persistCoord(it, c)
   return c
 }
 
-/** 自动计算“上一站 → 本站”的自驾与公交时长并写回 */
+/** 自动计算“上一站 → 本站”的自驾与公交时长并写回;返回是否成功 */
 async function autoCalcLeg(day, dest) {
-  if (calcBusy[dest.id]) return
+  if (calcBusy[dest.id]) return false
   const items = flattenDests()
   const idx = items.findIndex((it) => it.dest.id === dest.id)
-  if (idx <= 0) return // 全程首站没有上一站
+  if (idx <= 0) return false // 全程首站没有上一站
   calcBusy[dest.id] = true
   try {
     const prevItem = items[idx - 1]
-    const a = await coordOf(prevItem.dest, prevItem.day)
-    const b = await coordOf(dest, day)
-    if (!a || !b) return
+    const a = await coordOf(prevItem)
+    const b = await coordOf({ di: idx, day, dest })
+    if (!a || !b) return false
     const drive = await drivingMinutes(a, b)
     const transit = transitMinutes(drive)
-    if (!drive) return
+    if (!drive) return false
     await store.updateDestinationFields(props.plan.id, day.date, dest.id, {
       drive_min: drive,
       transit_min: transit
     })
     if (view.value === 'map') drawSegments() // 地图同步刷新路段
+    return true
+  } catch {
+    return false
   } finally {
     delete calcBusy[dest.id]
   }
+}
+
+/** 进入计划后自动优先计算缺失路段时长;遗留未算的会小规模重试几轮 */
+function scheduleAutoDurations() {
+  if (!props.canEdit || autoRun.value) return
+  const pid = props.plan.id
+  if (autoRounds[pid] >= 3) return // 一个计划最多自动跑 3 轮
+  autoRounds[pid] = (autoRounds[pid] || 0) + 1
+  clearTimeout(autoTimer)
+  autoTimer = setTimeout(async () => {
+    autoRun.value = true
+    const items = flattenDests()
+    if (items.length < 2) return
+    let done = 0
+    let fail = 0
+    for (let i = 1; i < items.length; i++) {
+      const it = items[i]
+      if (it.dest.drive_min && it.dest.transit_min) continue
+      ;(await autoCalcLeg(it.day, it.dest)) ? done++ : fail++
+      await new Promise((r) => setTimeout(r, 220)) // 温和限速,避免触发风控
+    }
+    autoRun.value = false
+    const left = flattenDests().filter((it) => !(it.dest.drive_min && it.dest.transit_min))
+    if (done || fail) {
+      legNote.value = done
+        ? `已自动算好 ${done} 段路程时长` + (fail ? `,有 ${fail} 段暂无法定位` : '')
+        : '路段自动计算失败,可逐段点击「自动算时长」重试'
+      clearTimeout(noteTimer)
+      noteTimer = setTimeout(() => (legNote.value = ''), 7000)
+    }
+    // 有遗留(新地点/偶发失败)且轮次未满 → 稍后自动再补一轮
+    if (left.length && autoRounds[pid] < 3) {
+      clearTimeout(autoTimer)
+      autoTimer = setTimeout(() => scheduleAutoDurations(), 3500)
+    }
+  }, 900)
 }
 
 const escapeHtml = (s = '') =>
@@ -127,20 +225,29 @@ const SEG_COLORS = ['#B75973', '#D98A5B', '#2FA184', '#E76F90', '#8B5FC7']
 
 async function paintRoute() {
   if (!map || !routeLayer) return
-  const items = flattenDests()
-  const have = (d) => typeof d.lat === 'number' && typeof d.lng === 'number'
-  const lack = items.filter((it) => !have(it.dest))
+  const lack = flattenDests().filter((it) => !effCoord(it.dest))
   geoMissing.value = lack.length
 
   // 逐条补全缺失坐标(Sequential,失败跳过)
   for (const it of lack) {
-    const c = await geocodePlace(it.dest.place)
+    const c = await geocodePlace(it.dest.place, { hint: props.plan.start_city })
     if (c && map) {
-      await store.updateDestinationFields(props.plan.id, it.day.date, it.dest.id, { lat: c.lat, lng: c.lng })
+      persistCoord(it, c)
       geoMissing.value--
     }
   }
   await drawSegments()
+}
+
+/** 只取已有坐标的目的地(含临时定位),供地图绘制 */
+function visItems() {
+  return flattenDests()
+    .map((it) => {
+      const e = effCoord(it.dest)
+      if (!e) return null
+      return { ...it, dest: { ...it.dest, ...e } }
+    })
+    .filter(Boolean)
 }
 
 /** 按顺序把 单天/跨天 自驾路段画到地图上 */
@@ -148,7 +255,7 @@ async function drawSegments() {
   if (!map || !routeLayer) return
   const L = await getL()
   routeLayer.clearLayers()
-  const items = flattenDests().filter((it) => typeof it.dest.lat === 'number' && typeof it.dest.lng === 'number')
+  const items = visItems()
   items.forEach((it) => addMarker(L, it))
   const pts = items.map((it) => [it.dest.lat, it.dest.lng])
   for (let i = 1; i < items.length; i++) {
@@ -192,7 +299,7 @@ function addMarker(L, { di, day, dest }) {
        <div class="rt-pop-title">D${dayIndex(props.plan.start_date, day.date)} · ${escapeHtml(dest.place)}</div>
        <div class="rt-pop-sub">${escapeHtml(fmtDay(day.date))}${dest.time ? ' · ' + escapeHtml(dest.time) : ''}</div>
        ${dest.note ? `<div class="rt-pop-note">${escapeHtml(dest.note)}</div>` : ''}
-       <a class="rt-pop-link" target="_blank" rel="noopener" href="${escapeHtml(navUrl(dest.place))}">打开导航 ↗</a>
+       <a class="rt-pop-link" target="_blank" rel="noopener" href="${escapeHtml(navUrl(dest.place, { lat: dest.lat, lng: dest.lng }))}">打开导航 ↗</a>
      </div>`
   )
   L.marker([dest.lat, dest.lng], {
@@ -218,12 +325,26 @@ watch(
       routeLayer = null
       geoMissing.value = 0
     }
+    extras.clear()
+    legNote.value = ''
+    autoRun.value = false
     view.value = 'list'
   }
 )
+
+// 进入计划后数据就绪即自动优先计算路段时长
+watch(
+  () => totalDest.value,
+  (n) => {
+    if (n > 1) scheduleAutoDurations()
+  }
+)
+
 onBeforeUnmount(() => {
   if (map) map.remove()
   map = null
+  clearTimeout(autoTimer)
+  clearTimeout(noteTimer)
 })
 
 /* ---------------- 添加目的地 ---------------- */
@@ -255,10 +376,12 @@ async function saveDest() {
     drive_min: destForm.driveMin ? Number(destForm.driveMin) : null
   })
   showAdd.value = false
-  // 后台补坐标,让地图打开即有位置
-  const c = await geocodePlace(destForm.place.trim())
-  if (c && props.plan) {
-    await store.updateDestinationFields(props.plan.id, destForm.date, destId, { lat: c.lat, lng: c.lng })
+  // 后台定位坐标,并自动尝试计算“上一站→本站”时长
+  const item = flattenDests().find((it) => it.dest.id === destId)
+  if (item && props.canEdit) {
+    autoCalcLeg(item.day, item.dest) // 不阻塞表单关闭
+  } else if (item) {
+    coordOf(item)
   }
 }
 
@@ -351,10 +474,12 @@ async function ensureWeather(dateISO, force = false) {
   if (day && !spot) {
     const first = day.destinations?.[0]
     if (first) {
-      const c = await geocodePlace(first.place)
-      if (c && props.plan) {
+      const c = await geocodePlace(first.place, { hint: props.plan.start_city })
+      if (c && props.canEdit) {
         await store.updateDestinationFields(props.plan.id, dateISO, first.id, { lat: c.lat, lng: c.lng })
         spot = { ...first, ...c }
+      } else if (c) {
+        spot = { ...first, ...c } // 围观者仅本次会话定位,不落库
       }
     }
   }
@@ -396,8 +521,13 @@ watch(
           <i class="fa-solid fa-route text-[19px] text-primary" aria-hidden="true"></i>
           路线规划
           <span v-if="totalDest" class="chip chip-brand">{{ totalDest }} 个地点</span>
+          <span v-if="autoRun" class="chip chip-amber">
+            <i class="fa-solid fa-circle-notch" style="animation: spin 0.9s linear infinite" aria-hidden="true"></i>
+            自动算时长中…
+          </span>
         </h2>
         <p class="muted mt-1">每日行程一目了然,打开地图查看整条路线</p>
+        <p v-if="legNote" class="mt-1 text-[12.5px] font-medium text-primary">{{ legNote }}</p>
       </div>
       <div class="flex items-center gap-2">
         <!-- 列表 / 地图 切换 -->
@@ -428,6 +558,9 @@ watch(
         <span v-if="geoMissing" class="chip chip-amber absolute left-4 top-4 z-[500] shadow-sm">
           <i class="fa-solid fa-magnifying-glass-location" aria-hidden="true"></i>
           正在定位 {{ geoMissing }} 个地点…
+        </span>
+        <span v-if="mapStatus" class="chip chip-amber absolute left-4 top-12 z-[500] shadow-sm">
+          <i class="fa-solid fa-map" aria-hidden="true"></i>{{ mapStatus }}
         </span>
         <div class="absolute bottom-3 left-4 z-[500] flex gap-2 rounded-[12px] bg-surface/85 px-3 py-2 backdrop-blur">
           <span class="text-[11px] font-semibold text-muted">图例</span>
@@ -553,7 +686,7 @@ watch(
                       <i class="fa-regular fa-message text-[11px]" aria-hidden="true"></i>
                       建议{{ commentsOf(plan.id, day.date, d.id).length ? ` ${commentsOf(plan.id, day.date, d.id).length}` : '' }}
                     </button>
-                    <a class="btn btn-ghost btn-sm !px-2.5" :href="navUrl(d.place)" target="_blank" rel="noopener" title="打开导航">
+                    <a class="btn btn-ghost btn-sm !px-2.5" :href="navUrl(d.place, d)" target="_blank" rel="noopener" title="打开导航">
                       <i class="fa-solid fa-location-arrow text-[11px]" aria-hidden="true"></i>导航
                     </a>
                     <button v-if="canEdit" class="icon-btn icon-btn-danger" :title="`移除 ${d.place}`" @click="onRemoveDest(day, d)">

@@ -1,32 +1,157 @@
 // ============================================================
-// 地图坐标服务(OpenStreetMap Nominatim,免费无 Key)
-// 演示/离线场景不可用时静默失败,路线列表仍可正常使用。
+// 坐标地理编码服务(多源 + 多候选自动回退)
+//   源1:Photon(komoot)  源2:OSM Nominatim
+// 候选词自动裁剪装饰性后缀(景区/画廊/公园…)并按计划集合城市提示重查,
+// 以解决「南大门换乘中心被解析到成都」这类同名歧义。
 // ============================================================
 
-const cache = new Map() // 查询串 -> {lat,lng} | null(null=已尝试失败)
+const cache = new Map() // 候选词 -> {lat,lng} | null
 
-export async function geocodePlace(query) {
-  const q = String(query || '').trim()
+const STOP_WORDS = ['取车', '入住', '觅食', '汇合', '集合', '返程', '停车', '打卡', '看日出', '午饭', '午餐', '回程', '出发']
+
+/** 清理地点描述:去掉括号、备注与动作词,保留真正可搜索的地理名称 */
+export function cleanQuery(raw) {
+  let s = String(raw || '')
+  s = s.replace(/[（(].*?[)）]/g, '').trim()
+  // “黄山北站 · 取车” → 黄山北站;“返程 · 京台高速” → 京台高速
+  const parts = s.split(/[·•|,，、]/).map((x) => x.trim()).filter(Boolean)
+  const head = parts[0] || ''
+  const isHeadAction = STOP_WORDS.some((w) => head === w || head.endsWith(w))
+  let q = isHeadAction && parts.length > 1 ? parts.slice(1).join('') : head
+  for (const w of STOP_WORDS) {
+    if (q.endsWith(w) && q.length > w.length + 1) q = q.slice(0, -w.length).trim()
+  }
+  return q
+}
+
+/* 装饰性后缀,由长到短依次剥离生成候选词 */
+const DECOR = ['风景名胜区', '风景区', '山水画廊', '景区', '游客中心', '换乘中心', '博物馆', '公园', '画廊', '停车场', '观景台', '驿站', '营地', '老街', '中心', '景区北门', '景区南门']
+
+function candidatesOf(q, hint) {
+  const set = []
+  const push = (x) => {
+    x = (x || '').trim().replace(/\s+/g, ' ')
+    if (x && !set.includes(x)) set.push(x)
+  }
+  push(q)
+  if (hint) push(`${hint} ${q}`)
+  let cur = q
+  for (const d of DECOR) {
+    if (cur.length > d.length + 2 && cur.endsWith(d)) {
+      cur = cur.slice(0, -d.length).trim()
+      push(cur)
+      if (hint) push(`${hint} ${cur}`)
+    }
+  }
+  return set
+}
+
+async function photon(q) {
+  const u = new URL('https://photon.komoot.io/api/')
+  u.searchParams.set('q', q)
+  u.searchParams.set('limit', '1')
+  const res = await fetch(u.toString())
+  if (!res.ok) throw new Error(String(res.status))
+  const j = await res.json()
+  const f = j?.features?.[0]
+  if (!f?.geometry?.coordinates) return null
+  return { lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0] }
+}
+
+async function nominatim(q) {
+  const u = new URL('https://nominatim.openstreetmap.org/search')
+  u.searchParams.set('format', 'json')
+  u.searchParams.set('limit', '1')
+  u.searchParams.set('q', q)
+  const res = await fetch(u.toString(), { headers: { Accept: 'application/json' } })
+  if (!res.ok) throw new Error(String(res.status))
+  const rows = await res.json()
+  return rows?.[0] ? { lat: parseFloat(rows[0].lat), lng: parseFloat(rows[0].lon) } : null
+}
+
+/**
+ * @param {string} raw    目的地原始描述
+ * @param {object}  [opts]
+ * @param {string}  [opts.hint] 城市提示(计划集合城市),用于消歧
+ */
+export async function geocodePlace(raw, opts = {}) {
+  const q = cleanQuery(raw)
   if (!q) return null
-  if (cache.has(q)) return cache.get(q)
+  const hint = (opts.hint || '').replace(/(市|省)$/, '')
+  const key = hint ? `${hint}>${q}` : q
+  if (cache.has(key)) return cache.get(key)
+
+  // 1) Photon 逐个候选尝试
+  for (const c of candidatesOf(q, hint)) {
+    try {
+      const hit = await photon(c)
+      if (hit) {
+        cache.set(key, hit)
+        return hit
+      }
+    } catch {
+      /* 尝试下一个候选/源 */
+    }
+  }
+  // 2) Nominatim 兜底(海外直连时更稳)
   try {
-    const res = await fetch(
-      `https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=cn&q=${encodeURIComponent(q)}`,
-      { headers: { Accept: 'application/json' } }
-    )
-    if (!res.ok) throw new Error(res.status)
-    const rows = await res.json()
-    const hit = rows[0]
-    const out = hit ? { lat: parseFloat(hit.lat), lng: parseFloat(hit.lon) } : null
-    cache.set(q, out)
-    return out
+    const hit = await nominatim(hint ? `${hint} ${q}` : q)
+    cache.set(key, hit)
+    return hit
   } catch {
-    cache.set(q, null)
+    cache.set(key, null)
     return null
   }
 }
 
-/** 让地图弹窗展示 高德/谷歌 均可的网页导航链接 */
-export function navUrl(place) {
-  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(place)}`
+/** 让地图弹窗展示网页导航链接 —— 自动使用国内地图(高德,无 Key 直开) */
+export function navUrl(place, wgs) {
+  const name = encodeURIComponent(place || '')
+  if (wgs && typeof wgs.lat === 'number' && typeof wgs.lng === 'number') {
+    // WGS84 → GCJ-02(高德坐标系),偏差通常百米级,可直接驾车导航
+    const g = wgs2gcj(wgs.lat, wgs.lng)
+    return `https://uri.amap.com/navigation?to=${g.lng},${g.lat}&toName=${name}&mode=car`
+  }
+  // 无坐标:关键词搜索定位(在集合城市内更准)
+  return `https://uri.amap.com/search?keyword=${name}`
+}
+
+/* ---------------- WGS84 → GCJ-02(火星坐标) ---------------- */
+const PI = Math.PI
+const A = 6378245.0
+const EE = 0.00669342162296594323
+function tx(x, y) {
+  let r =
+    300.1 +
+    x -
+    100 * Math.sin((12 * x * PI) / 180) * Math.cos((6 * x * PI) / 180) -
+    50 * Math.cos((x * PI) / 180) * Math.sin((x * PI) / 180)
+  r +=
+    20 * Math.sin((6 * x * PI) / 180) * Math.cos((6 * x * PI) / 180) +
+    10 * Math.sin((5 * x * PI) / 180) * Math.cos((3 * x * PI) / 180)
+  r -= 15 * Math.sin((40 * x * PI) / 180) * Math.cos((40 * x * PI) / 180)
+  return r
+}
+function ty(x, y) {
+  let r =
+    300.1 -
+    x -
+    100 * Math.sin((6 * x * PI) / 180) * Math.cos((12 * x * PI) / 180) -
+    50 * Math.cos((x * PI) / 180) * Math.sin((x * PI) / 180)
+  r +=
+    20 * Math.sin((12 * x * PI) / 180) * Math.cos((6 * x * PI) / 180) +
+    10 * Math.sin((3 * x * PI) / 180) * Math.cos((15 * x * PI) / 180)
+  r -= 15 * Math.sin((60 * x * PI) / 180) * Math.cos((30 * x * PI) / 180)
+  return r
+}
+function wgs2gcj(lat, lng) {
+  let dLat = tx(lng - 105.0, lat - 35.0)
+  let dLng = ty(lng - 105.0, lat - 35.0)
+  const radLat = (lat / 180) * PI
+  let magic = Math.sin(radLat)
+  magic = 1 - EE * magic * magic
+  const sqrtMagic = Math.sqrt(magic)
+  dLat = (dLat * 180) / (((A * (1 - EE)) / (magic * sqrtMagic)) * PI)
+  dLng = (dLng * 180) / ((A / sqrtMagic) * Math.cos(radLat) * PI)
+  return { lat: lat + dLat, lng: lng + dLng }
 }

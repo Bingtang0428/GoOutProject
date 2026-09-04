@@ -8,6 +8,7 @@
 import { ref, reactive, computed } from 'vue'
 import { useContentStore } from '@/stores/content'
 import { fmtDay, todayISO } from '@/utils/date'
+import { money } from '@/utils/money'
 import BaseModal from '@/components/ui/BaseModal.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import Avatar from '@/components/ui/Avatar.vue'
@@ -72,8 +73,6 @@ const stats = computed(() => {
     costPerKm: km > 0 ? totalCost / km : null
   }
 })
-
-const money = (n) => `¥${Number(n || 0).toLocaleString('zh-CN', { maximumFractionDigits: 0 })}`
 
 /* ---------- 加油记录 ---------- */
 const showFuel = ref(false)

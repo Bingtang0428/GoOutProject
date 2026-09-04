@@ -6,6 +6,7 @@
 import { computed } from 'vue'
 import { useContentStore } from '@/stores/content'
 import { usePlansStore } from '@/stores/plans'
+import { money } from '@/utils/money'
 
 const props = defineProps({
   plan: { type: Object, required: true }
@@ -38,8 +39,6 @@ const byCat = computed(() => {
   }
   return CATS.map((c) => ({ ...c, amount: map.get(c.key) || 0 })).filter((c) => c.amount > 0)
 })
-
-const money = (n) => `¥${Number(n || 0).toLocaleString('zh-CN', { maximumFractionDigits: 0 })}`
 
 /** 预算输入(仅创建者) */
 function onBudgetChange(e) {

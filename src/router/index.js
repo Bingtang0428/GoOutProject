@@ -5,6 +5,11 @@ import { useAuthStore } from '@/stores/auth'
 // 这里只处理鉴权与默认跳转
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
+  scrollBehavior(to, from, savedPosition) {
+    // 返回/前进时还原滚动;常规跳转回到顶部(切计划/模块更清爽)
+    if (savedPosition) return savedPosition
+    return { top: 0 }
+  },
   routes: [
     {
       path: '/',

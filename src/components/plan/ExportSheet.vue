@@ -9,6 +9,7 @@ import { ref, computed, nextTick } from 'vue'
 import { useContentStore } from '@/stores/content'
 import { fmtDay, fmtRange, fmtSavedAt, todayISO, relKey } from '@/utils/date'
 import { pastelOf } from '@/utils/misc'
+import { money as fmtMoney } from '@/utils/money'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -21,8 +22,6 @@ const sheetRef = ref(null)
 const busy = ref(false)
 const notice = ref('')
 
-const fmtMoney = (n) => `¥${Number(n || 0).toLocaleString('zh-CN', { maximumFractionDigits: 2 })}`
-
 const days = computed(() =>
   content.rowsOf(props.plan.id, 'days').slice().sort((a, b) => a.date.localeCompare(b.date))
 )
@@ -31,6 +30,10 @@ const todos = computed(() => content.rowsOf(props.plan.id, 'todos'))
 const transits = computed(() => content.rowsOf(props.plan.id, 'transits'))
 const reminders = computed(() => content.rowsOf(props.plan.id, 'reminders'))
 const bills = computed(() => content.rowsOf(props.plan.id, 'bills'))
+const vehicles = computed(() => content.rowsOf(props.plan.id, 'vehicle'))
+const fuels = computed(() =>
+  content.rowsOf(props.plan.id, 'fuel').slice().sort((a, b) => (a.date || '').localeCompare(b.date || ''))
+)
 
 const openTodos = computed(() => todos.value.filter((t) => !t.done))
 const upcomingOpen = computed(() => {
@@ -161,7 +164,10 @@ const grad = computed(() => {
                   </p>
                   <p v-if="d.destinations?.length" class="mb-1">
                     <span v-for="(x, i) in d.destinations" :key="x.id" class="print-dest">
-                      {{ x.time || '全天' }} {{ x.place }}<template v-if="x.drive_min">(自驾 {{ x.drive_min }}min)</template><template v-if="i < d.destinations.length - 1"> → </template>
+                      {{ x.time || '全天' }} {{ x.place }}
+                      <template v-if="x.drive_min">(自驾约 {{ x.drive_min }} 分钟)</template>
+                      <template v-if="x.transit_min">(公交约 {{ x.transit_min }} 分钟)</template>
+                      <template v-if="i < d.destinations.length - 1"> → </template>
                     </span>
                   </p>
                   <p v-else class="text-[12px] italic" style="color:#9a7a86">待安排</p>
@@ -197,9 +203,32 @@ const grad = computed(() => {
                   </p>
                 </template>
 
+                <!-- 车辆里程 -->
+                <template v-if="fuels.length">
+                  <h2 class="print-h2">五、车辆与里程</h2>
+                  <table class="print-table">
+                    <tbody>
+                      <tr v-if="vehicles[0]">
+                        <td>车辆</td>
+                        <td>{{ vehicles[0].name || '—' }}</td>
+                        <td>车牌</td>
+                        <td>{{ vehicles[0].plate || '—' }}</td>
+                        <td>{{ fuels.length }} 次加油</td>
+                      </tr>
+                      <tr v-for="f in fuels" :key="f.id">
+                        <td>{{ fmtDay(f.date, false) }}</td>
+                        <td>{{ f.odometer ? '里程 ' + f.odometer + ' km' : '—' }}</td>
+                        <td>{{ f.liters ? f.liters + ' L' : '—' }}</td>
+                        <td>{{ fmtMoney(f.amount) }}</td>
+                        <td>{{ f.note || '' }}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </template>
+
                 <!-- 分账 -->
                 <template v-if="bills.length">
-                  <h2 class="print-h2">五、分账概览(共 {{ bills.length }} 笔)</h2>
+                  <h2 class="print-h2">六、分账概览(共 {{ bills.length }} 笔)</h2>
                   <table class="print-table">
                     <tbody>
                       <tr>

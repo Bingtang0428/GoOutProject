@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # 兔兔同行 · 自驾旅行企划(多人协作版)
 
 > 雨林通往雪景,你向往的旅行 ♪
@@ -107,3 +108,7 @@ vercel            # Framework 自动识别 Vite
 
 > ⚠️ `supabase/schema.sql` 中的 RLS 策略面向原型全放开,正式上线前请替换为基于
 > `auth.uid()` / 成员关系(plans.members)的访问控制。
+=======
+# GoOutProject
+逃离工位企划代码仓
+>>>>>>> 6390a82c92df6445f5a4c782a00059042c3dbb88
