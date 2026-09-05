@@ -139,7 +139,7 @@ export async function searchPlaces(raw, hint = '') {
     /* fallback 下一源 */
   }
 
-  // 2) Photon(OSM),lang=zh 尽量返回中文
+  // 2) Photon(OSM)兜底 —— 注意:Photon 不支持 lang 参数(传参会 400)
   const tries = [q]
   if (hint) tries.push(`${hint} ${q}`)
   const out = []
@@ -149,7 +149,6 @@ export async function searchPlaces(raw, hint = '') {
       const u = new URL('https://photon.komoot.io/api/')
       u.searchParams.set('q', t)
       u.searchParams.set('limit', '6')
-      u.searchParams.set('lang', 'zh')
       const res = await fetch(u.toString())
       if (!res.ok) continue
       const j = await res.json()
@@ -168,6 +167,9 @@ export async function searchPlaces(raw, hint = '') {
       /* continue */
     }
   }
+  // 中文优先:OSM 部分点位同时有中英文名时,优先展示含中文的名称
+  const cjk = (s) => /[\u4e00-\u9fff]/.test(s)
+  out.sort((a, b) => (cjk(b.name) ? 1 : 0) - (cjk(a.name) ? 1 : 0))
   return out.slice(0, 8)
 }
 
