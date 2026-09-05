@@ -26,7 +26,6 @@ const code = ref('')
 const errorMsg = ref('')
 const busy = ref(false)
 
-const isRemote = computed(() => auth.isSupabase)
 const needsCode = computed(() => mode.value === 'register' || mode.value === 'admin')
 
 watch([nickname, password, code, mode], () => (errorMsg.value = ''))
@@ -58,7 +57,7 @@ const stepsFor = computed(() => {
 
 function submit() {
   if (busy.value) return
-  if (!auth.isSupabase) return enterDemo()
+  if (!isSupabase) return enterDemo()
   mode.value === 'login' ? doLogin() : doRegister()
 }
 
@@ -161,7 +160,7 @@ function routeTo(me) {
         </div>
 
         <!-- 演示模式 -->
-        <template v-if="!isRemote">
+        <template v-if="!isSupabase">
           <h1 class="title-1 mb-1 text-[22px]">开始你的旅程</h1>
           <p class="mb-6 text-[13px] text-muted">当前为本地演示模式(数据存浏览器);配置 Supabase 后将切换为正式登录/注册。</p>
           <label class="flabel">你的昵称</label>
