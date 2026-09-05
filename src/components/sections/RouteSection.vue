@@ -53,8 +53,13 @@ async function getL() {
   return Lmod
 }
 
-/* 底图源:国内网络下 OSM 瓦片常被屏蔽,自动回退到 CARTO / Esri */
+/* 底图源:优先高德中文瓦片(国内地名全中文);异常自动回退 CARTO / Esri */
 const TILE_PROVIDERS = [
+  {
+    url: 'https://webrd0{s}.is.autonavi.com/appmaptile?style=7&x={x}&y={y}&z={z}&lang=zh_cn&size=1&scale=1',
+    subdomains: ['1', '2', '3', '4'],
+    attribution: '&copy; <a href="https://www.amap.com/">高德地图</a>'
+  },
   {
     url: 'https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>'
@@ -74,7 +79,9 @@ function switchTile(L, failMsg = true) {
     mapStatus.value = '底图加载失败,请检查网络后重新打开地图'
     return
   }
-  const layer = L.tileLayer(next.url, { maxZoom: 19, attribution: next.attribution }).addTo(map)
+  const opts = { maxZoom: 19, attribution: next.attribution }
+  if (next.subdomains) opts.subdomains = next.subdomains
+  const layer = L.tileLayer(next.url, opts).addTo(map)
   let failedOnce = false
   layer.on('tileerror', () => {
     if (failedOnce) return

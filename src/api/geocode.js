@@ -1,9 +1,9 @@
 // ============================================================
-// 坐标地理编码服务(多源 + 多候选自动回退)
-//   源1:Photon(komoot)  源2:OSM Nominatim
-// 候选词自动裁剪装饰性后缀(景区/画廊/公园…)并按计划集合城市提示重查,
-// 以解决「南大门换乘中心被解析到成都」这类同名歧义。
+// 坐标地理编码服务
+//  云端(Supabase/Pages):一律经本站 /api/geocode 服务端代理 → 高德(中文)
+//  本地演示模式:仍用 Photon(OSM),便于无 Key 离线演示
 // ============================================================
+import { isSupabase } from '@/api/supabase'
 
 const cache = new Map() // 候选词 -> {lat,lng} | null
 
@@ -81,7 +81,26 @@ export async function geocodePlace(raw, opts = {}) {
   const key = hint ? `${hint}>${q}` : q
   if (cache.has(key)) return cache.get(key)
 
-  // 1) Photon 逐个候选尝试
+  // 云端:经本站代理走高德(中文),配置 AMAP_KEY 后不再依赖 OSM
+  if (isSupabase) {
+    try {
+      const u = new URL('/api/geocode', window.location.origin)
+      u.searchParams.set('type', 'geo')
+      u.searchParams.set('q', q)
+      if (hint) u.searchParams.set('city', opts.hint)
+      const res = await fetch(u.toString())
+      const j = await res.json()
+      if (j?.ok && j.location?.lat != null && j.location?.lng != null) {
+        const hit = { lat: j.location.lat, lng: j.location.lng }
+        cache.set(key, hit)
+        return hit
+      }
+    } catch {
+      /* 进入兜底 */
+    }
+  }
+
+  // 1) Photon 逐个候选尝试(本地演示 / 未配置高德 Key 时兜底)
   for (const c of candidatesOf(q, hint)) {
     try {
       const hit = await photon(c)
