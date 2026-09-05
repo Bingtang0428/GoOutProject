@@ -12,6 +12,7 @@ import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseTag from '@/components/ui/BaseTag.vue'
 import GeoPlacePicker from '@/components/ui/GeoPlacePicker.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
+import { toast } from '@/composables/toast'
 
 const props = defineProps({
   plan: { type: Object, required: true },
@@ -120,6 +121,7 @@ async function save() {
   }
   if (editingId.value) await store.updateStay(props.plan.id, editingId.value, payload)
   else await store.addStay(props.plan.id, payload)
+  toast('食宿已保存')
   showEdit.value = false
 }
 

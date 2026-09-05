@@ -13,6 +13,7 @@ import BaseCheckbox from '@/components/ui/BaseCheckbox.vue'
 import BaseTag from '@/components/ui/BaseTag.vue'
 import Avatar from '@/components/ui/Avatar.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
+import { toast } from '@/composables/toast'
 
 const props = defineProps({
   plan: { type: Object, required: true },
@@ -68,6 +69,7 @@ async function add() {
   const title = newTitle.value.trim()
   if (!title) return
   await store.addTodo(props.plan.id, { title, due: newDue.value || null, day: newDay.value })
+  toast('任务已添加')
   showAdd.value = false
 }
 

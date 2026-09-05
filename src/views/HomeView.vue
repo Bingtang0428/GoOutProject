@@ -23,6 +23,8 @@ import BaseButton from '@/components/ui/BaseButton.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import Avatar from '@/components/ui/Avatar.vue'
 import ProgressBar from '@/components/ui/ProgressBar.vue'
+import CardSkeleton from '@/components/ui/CardSkeleton.vue'
+import { toast } from '@/composables/toast'
 import { isSupabase } from '@/api/supabase'
 
 useHead({ title: '我的计划 · 兔兔同行自驾旅行企划' })
@@ -47,9 +49,16 @@ onMounted(() => {
 })
 
 async function refreshAll() {
-  await plansStore.init()
-  refreshProgress()
+  loading.value = true
+  try {
+    await plansStore.init()
+    refreshProgress()
+  } finally {
+    loading.value = false
+  }
 }
+
+const loading = ref(false)
 
 watch(
   () => plansStore.plans.length,
@@ -175,11 +184,19 @@ function openEdit(plan) {
 }
 
 async function onSave(payload) {
-  if (editingPlan.value) {
-    await plansStore.updatePlan(editingPlan.value.id, payload)
-  } else {
-    const p = await plansStore.createPlan(payload)
-    router.push({ name: 'plan', params: { id: p.id } })
+  try {
+    if (editingPlan.value) {
+      await plansStore.updatePlan(editingPlan.value.id, payload)
+      toast('计划已更新')
+    } else {
+      const p = await plansStore.createPlan(payload)
+      toast('计划已创建,去规划路线吧')
+      router.push({ name: 'plan', params: { id: p.id } })
+      return
+    }
+  } catch (e) {
+    toast(e?.message || '保存失败,请稍后重试', 'error')
+    return
   }
   refreshAll()
 }
@@ -190,7 +207,12 @@ function requestDelete(plan) {
 }
 
 async function onDelete() {
-  await plansStore.removePlan(deletingPlan.value.id)
+  try {
+    await plansStore.removePlan(deletingPlan.value.id)
+    toast(isSupabase ? '计划已删除' : '已移入回收站,可在首页恢复')
+  } catch (e) {
+    toast(e?.message || '删除失败', 'error')
+  }
   deletingPlan.value = null
   showDeleteConfirm.value = false
   refreshAll()
@@ -371,6 +393,16 @@ async function purgeOne(entry) {
               @edit="openEdit"
               @delete="requestDelete"
             />
+          </div>
+        </section>
+
+        <!-- 加载骨架 -->
+        <section v-else-if="loading" class="mt-8">
+          <h2 class="title-2 mb-4">正在加载计划…</h2>
+          <div class="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
+            <CardSkeleton :lines="4" />
+            <CardSkeleton :lines="4" />
+            <CardSkeleton :lines="4" />
           </div>
         </section>
 

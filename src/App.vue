@@ -1,6 +1,6 @@
 <script setup>
 // 根组件:仅负责路由出口与页面切换过渡。
-// 布局(侧边栏/底部 Tab 等)由各视图自行组合,见 views/ 下各文件。
+import GlobalToast from '@/components/ui/GlobalToast.vue'
 </script>
 
 <template>
@@ -9,4 +9,5 @@
       <component :is="Component" :key="route.name" />
     </Transition>
   </RouterView>
+  <GlobalToast />
 </template>

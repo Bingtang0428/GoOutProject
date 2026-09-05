@@ -1,4 +1,4 @@
-<script setup>
+﻿<script setup>
 // ============================================================
 // 收藏攻略:瀑布流(Masonry)展示
 // 卡片含标题 / 来源链接 / 缩略图(封面上传→storage 或 base64)/ 收藏时间
@@ -15,6 +15,7 @@ import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseTag from '@/components/ui/BaseTag.vue'
 import Avatar from '@/components/ui/Avatar.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
+import { toast } from '@/composables/toast'
 
 const props = defineProps({
   plan: { type: Object, required: true },
@@ -119,6 +120,7 @@ async function save() {
       image: image || '',
       created_at: new Date().toISOString()
     })
+    toast('攻略已收藏')
     showAdd.value = false
   } catch (err) {
     form.fileHint = '图片上传失败,可稍后重试(链接仍可保存)'

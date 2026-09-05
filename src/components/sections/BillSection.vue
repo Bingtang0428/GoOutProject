@@ -1,4 +1,4 @@
-<script setup>
+﻿<script setup>
 // ============================================================
 // 分账(与 食宿/行程 联动)
 //  - 每笔记录「谁付的钱 + 涉及分摊的人」,按人聚合收支
@@ -16,6 +16,7 @@ import Avatar from '@/components/ui/Avatar.vue'
 import BudgetPanel from './BudgetPanel.vue'
 import VehiclePanel from './VehiclePanel.vue'
 import { money } from '@/utils/money'
+import { toast } from '@/composables/toast'
 import { fmtDay, todayISO } from '@/utils/date'
 
 const props = defineProps({
@@ -72,6 +73,8 @@ const form = reactive({
   category: 'other',
   paid_by: null, // {id,name}
   involves: [],
+  split: 'equal', // equal 人均 | custom 自定义份额
+  shares: {}, // personId -> 权重
   link: null, // {type,id,name}
   note: ''
 })
@@ -85,6 +88,8 @@ function resetForm() {
     category: 'other',
     paid_by: all[0] ? { id: all[0].id, name: all[0].name } : null,
     involves: all.map((p) => ({ id: p.id, name: p.name })),
+    split: 'equal',
+    shares: {},
     link: null,
     note: ''
   })
@@ -111,6 +116,8 @@ function openEdit(b) {
     category: b.category,
     paid_by: b.paid_by ? { id: b.paid_by.id, name: b.paid_by.name } : null,
     involves: (b.involves || []).map((i) => ({ id: i.id, name: i.name })),
+    split: b.split === 'custom' ? 'custom' : 'equal',
+    shares: { ...(b.shares || {}) },
     link: b.link || null,
     note: b.note || ''
   })
@@ -137,31 +144,59 @@ async function save() {
     category: form.category,
     paid_by: { id: form.paid_by.id, name: form.paid_by.name },
     involves: form.involves,
+    split: form.split,
+    shares:
+      form.split === 'custom'
+        ? form.involves.reduce((acc, p) => {
+            const w = Number(form.shares[p.id])
+            if (Number.isFinite(w) && w > 0) acc[p.id] = w
+            return acc
+          }, {})
+        : {},
     link: form.link,
     note: form.note.trim()
   }
   if (editingId.value) await store.updateBill(props.plan.id, editingId.value, payload)
   else await store.addBill(props.plan.id, payload)
+  toast(editingId.value ? '账单已更新' : '已记一笔')
   showForm.value = false
 }
 
 /* ---------------- 按人聚合 ---------------- */
 const rows = computed(() => bills.value)
 
+/* 分摊方式:equal 人均 / custom 自定义份额(权重,按比例分摊) */
+function weightOf(b, pid) {
+  const w = b.shares?.[pid]
+  const n = Number(w)
+  return Number.isFinite(n) && n > 0 ? n : 1
+}
+function sharesFor(b) {
+  const list = b.involves || []
+  const n = list.length
+  const out = new Map()
+  if (!n) return out
+  if (b.split !== 'custom') {
+    const each = Number(b.amount || 0) / n
+    for (const inv of list) out.set(inv.id, each)
+    return out
+  }
+  const total = list.reduce((s, inv) => s + weightOf(b, inv.id), 0) || 1
+  for (const inv of list) out.set(inv.id, (Number(b.amount || 0) * weightOf(b, inv.id)) / total)
+  return out
+}
+
 const settlement = computed(() => {
-  // credit 垫付 / share 应摊(仅按涉及人数均摊)
   const stat = new Map()
   for (const p of people.value) stat.set(p.id, { id: p.id, name: p.name, credit: 0, share: 0, count: 0 })
   for (const b of bills.value) {
-    const n = b.involves?.length || 0
-    if (!n) continue
-    const each = b.amount / n
-    b.involves.forEach((inv) => {
+    const shareMap = sharesFor(b)
+    for (const inv of b.involves || []) {
       const s = stat.get(inv.id)
-      if (!s) return
-      s.share += each
+      if (!s) continue
+      s.share += shareMap.get(inv.id) || 0
       s.count++
-    })
+    }
     if (b.paid_by) {
       const s = stat.get(b.paid_by.id)
       if (s) s.credit += b.amount
@@ -323,6 +358,9 @@ function linkChip(b) {
               <BaseTag :tone="catOf(b.category).tone === 'amber' ? 'amber' : 'brand'" class="!text-[11px]">
                 {{ catOf(b.category).label }}
               </BaseTag>
+              <BaseTag v-if="b.split === 'custom'" tone="plain" class="!text-[11px]">
+                <i class="fa-solid fa-sliders mr-1" aria-hidden="true"></i>自定义份额
+              </BaseTag>
             </p>
             <p class="mt-1 flex flex-wrap items-center gap-2 text-[12px] text-muted">
               <Avatar :name="whoName(b.paid_by)" :size="18" :ring="false" />
@@ -422,6 +460,28 @@ function linkChip(b) {
         </div>
 
         <div>
+          <label class="flabel">分摊方式</label>
+          <div class="flex gap-2">
+            <button
+              type="button"
+              class="chip flex-1 cursor-pointer !px-3 !py-2.5 text-center transition-all duration-150 active:scale-95"
+              :class="form.split === 'equal' ? 'chip-brand' : 'chip-plain'"
+              @click="form.split = 'equal'"
+            >
+              <i class="fa-solid fa-equals mr-1" aria-hidden="true"></i>人均均摊
+            </button>
+            <button
+              type="button"
+              class="chip flex-1 cursor-pointer !px-3 !py-2.5 text-center transition-all duration-150 active:scale-95"
+              :class="form.split === 'custom' ? 'chip-brand' : 'chip-plain'"
+              @click="form.split = 'custom'"
+            >
+              <i class="fa-solid fa-sliders mr-1" aria-hidden="true"></i>按项目份额(自定义)
+            </button>
+          </div>
+        </div>
+
+        <div>
           <label class="flabel">这笔钱涉及谁(参与分摊)</label>
           <div class="flex flex-wrap gap-2">
             <button
@@ -436,7 +496,33 @@ function linkChip(b) {
               {{ p.name }}
             </button>
           </div>
-          <p class="muted mt-2 text-[11.5px]">只勾选参与分摊的人,人均 = 金额 ÷ 人数</p>
+
+          <!-- 自定义份额:勾选者每人填权重(按权重比例分摊) -->
+          <div v-if="form.split === 'custom'" class="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
+            <label
+              v-for="p in form.involves"
+              :key="p.id"
+              class="flex items-center justify-between gap-2 rounded-[10px] bg-surface-2/70 px-3 py-1.5"
+            >
+              <span class="truncate text-[12px] text-ink-soft">{{ p.name }}</span>
+              <input
+                v-model.number="form.shares[p.id]"
+                type="number"
+                min="0.1"
+                step="0.1"
+                class="field !w-16 !px-2 !py-1 !text-right text-[12px]"
+                placeholder="1"
+              />
+            </label>
+          </div>
+
+          <p class="muted mt-2 text-[11.5px]">
+            {{
+              form.split === 'custom'
+                ? '自定义份额:每人按所填数字比例分摊(留空按 1),例如 2 : 1 表示一人付双份'
+                : '人均均摊 = 金额 ÷ 勾选人数'
+            }}
+          </p>
         </div>
 
         <div>

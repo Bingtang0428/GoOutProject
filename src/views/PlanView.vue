@@ -33,6 +33,7 @@ import TransitsSection from '@/components/sections/TransitsSection.vue'
 import PlanPermModal from '@/components/plan/PlanPermModal.vue'
 import ExportSheet from '@/components/plan/ExportSheet.vue'
 import ReportSheet from '@/components/plan/ReportSheet.vue'
+import { toast } from '@/composables/toast'
 import MemorySheet from '@/components/plan/MemorySheet.vue'
 import IssuesSheet from '@/components/plan/IssuesSheet.vue'
 
@@ -189,6 +190,7 @@ async function onSave(payload) {
 async function doDelete() {
   const id = plan.value?.id
   await plansStore.removePlan(id)
+  toast('计划已删除(可到首页回收站恢复)')
   router.replace('/')
 }
 
