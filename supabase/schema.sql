@@ -96,6 +96,16 @@ create table if not exists public.bills (
   created_at  timestamptz not null default now()
 );
 
+-- 行程变更日志:谁在何时改了什么(多人协作留痕)
+create table if not exists public.plan_logs (
+  id       uuid primary key default gen_random_uuid(),
+  plan_id  uuid not null references public.plans(id) on delete cascade,
+  actor    jsonb,                                -- {id,name}
+  action   text not null,
+  at       timestamptz not null default now()
+);
+create index if not exists idx_plan_logs_plan on public.plan_logs(plan_id, at desc);
+
 -- 邀请码登录(替代邮箱注册):码可设置使用次数 1-100
 create table if not exists public.invite_codes (
   id          uuid primary key default gen_random_uuid(),
@@ -335,11 +345,12 @@ alter table public.transits   enable row level security;
 alter table public.vehicles   enable row level security;
 alter table public.fuel_logs  enable row level security;
 alter table public.invite_codes enable row level security;
+alter table public.plan_logs enable row level security;
 
 do $$
 declare t text;
 begin
-  foreach t in array array['plans','route_days','stays','todos','guides','reminders','bills','comments','transits','vehicles','fuel_logs','invite_codes'] loop
+  foreach t in array array['plans','route_days','stays','todos','guides','reminders','bills','comments','transits','vehicles','fuel_logs','invite_codes','plan_logs'] loop
     execute format('drop policy if exists "%s_all" on public.%I', t, t);
     execute format('create policy "%s_all" on public.%I for all using (true) with check (true)', t, t);
   end loop;

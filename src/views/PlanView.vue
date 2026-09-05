@@ -18,6 +18,8 @@ import MobileTopNav from '@/components/layout/MobileTopNav.vue'
 import MobileTabBar from '@/components/layout/MobileTabBar.vue'
 import PlanFormModal from '@/components/home/PlanFormModal.vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
+import BaseModal from '@/components/ui/BaseModal.vue'
+import Avatar from '@/components/ui/Avatar.vue'
 import BaseTag from '@/components/ui/BaseTag.vue'
 import AvatarStack from '@/components/ui/AvatarStack.vue'
 import RouteSection from '@/components/sections/RouteSection.vue'
@@ -26,6 +28,7 @@ import TodoSection from '@/components/sections/TodoSection.vue'
 import GuideSection from '@/components/sections/GuideSection.vue'
 import ReminderSection from '@/components/sections/ReminderSection.vue'
 import BillSection from '@/components/sections/BillSection.vue'
+import { supabase, isSupabase } from '@/api/supabase'
 import TransitsSection from '@/components/sections/TransitsSection.vue'
 import PlanPermModal from '@/components/plan/PlanPermModal.vue'
 import ExportSheet from '@/components/plan/ExportSheet.vue'
@@ -117,11 +120,40 @@ const stats = computed(() => {
   }
 })
 
-// —— 编辑 / 删除 / 权限 / 导出 / 撤销
+// —— 编辑 / 删除 / 权限 / 导出 / 撤销 / 动态
 const showForm = ref(false)
 const showDelete = ref(false)
 const showPerm = ref(false)
 const showExport = ref(false)
+const showLogs = ref(false)
+const planLogs = ref([])
+
+async function loadPlanLogs() {
+  if (!isSupabase || !plan.value) return
+  const { data, error } = await supabase
+    .from('plan_logs')
+    .select('*')
+    .eq('plan_id', plan.value.id)
+    .order('at', { ascending: false })
+    .limit(30)
+  if (!error) planLogs.value = data || []
+}
+
+function openLogs() {
+  planLogs.value = []
+  showLogs.value = true
+  loadPlanLogs()
+}
+
+function agoTxt(iso) {
+  const d = new Date(iso)
+  const diff = Math.max(0, (Date.now() - d.getTime()) / 60000)
+  if (diff < 1) return '刚刚'
+  if (diff < 60) return `${Math.floor(diff)} 分钟前`
+  if (diff < 1440) return `${Math.floor(diff / 60)} 小时前`
+  if (diff < 10080) return `${Math.floor(diff / 1440)} 天前`
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 
 // 条目级撤销浮层:删除操作会先在 content store 留下快照
 const undoSnack = ref(null)
@@ -182,6 +214,9 @@ onBeforeUnmount(() => {
     <DesktopSidebar />
     <MobileTopNav :back="true" :title="plan.name" :subtitle="fmtRange(plan.start_date, plan.end_date)" @back="backHome">
       <template #actions>
+        <button v-if="isSupabase" class="icon-btn" aria-label="最近动态" @click="openLogs">
+          <i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i>
+        </button>
         <button class="icon-btn" aria-label="导出行程单" @click="showExport = true">
           <i class="fa-solid fa-file-export" aria-hidden="true"></i>
         </button>
@@ -240,6 +275,9 @@ onBeforeUnmount(() => {
 
             <!-- 桌面操作 -->
             <div class="hidden items-center gap-2 md:flex">
+              <button v-if="isSupabase" class="btn btn-ghost btn-sm" style="background: rgba(255,255,255,0.6)" @click="openLogs">
+                <i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i>最近动态
+              </button>
               <button class="btn btn-ghost btn-sm" style="background: rgba(255,255,255,0.6)" @click="showExport = true">
                 <i class="fa-solid fa-file-export" aria-hidden="true"></i>导出行程单
               </button>
@@ -328,6 +366,25 @@ onBeforeUnmount(() => {
     <PlanFormModal v-model="showForm" :plan="plan" @save="onSave" />
     <PlanPermModal v-if="isOwner" v-model="showPerm" :plan="plan" />
     <ExportSheet v-model="showExport" :plan="plan" />
+
+    <!-- 最近动态 -->
+    <BaseModal v-model="showLogs" title="最近动态" :max-width="'480px'">
+      <p v-if="!isSupabase" class="muted py-6 text-center text-[13px]">动态日志仅在云端模式下记录</p>
+      <ul v-else class="space-y-2">
+        <li v-for="l in planLogs" :key="l.id" class="card flex items-start gap-3 px-4 py-3">
+          <Avatar :name="l.actor?.name || '系统'" :size="30" />
+          <div class="min-w-0 flex-1">
+            <p class="text-[13.5px] text-ink-soft">
+              <b class="font-semibold text-ink">{{ l.actor?.name || '系统' }}</b> {{ l.action }}
+            </p>
+            <p class="muted mt-0.5 text-[11.5px]">{{ agoTxt(l.at) }}</p>
+          </div>
+        </li>
+        <li v-if="!planLogs.length" class="muted py-6 text-center text-[13px]">
+          还没有变更记录 —— 成员新增/修改/删除内容后会显示在这里
+        </li>
+      </ul>
+    </BaseModal>
     <ConfirmDialog
       v-model="showDelete"
       title="删除这份计划?"

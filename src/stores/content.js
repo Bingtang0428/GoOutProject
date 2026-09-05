@@ -16,6 +16,7 @@ import { defineStore } from 'pinia'
 import { ref, reactive } from 'vue'
 import { uid, makeUuid, isUuid } from '@/utils/misc'
 import { supabase, isSupabase } from '@/api/supabase'
+import { useAuthStore } from '@/stores/auth'
 import * as localDb from '@/api/localDb'
 import { eachDayISO } from '@/utils/date'
 
@@ -114,6 +115,7 @@ export const useContentStore = defineStore('content', () => {
       throw error
     }
     applyById(planId, key, data) // 以服务端行(含默认值)为准
+    await maybeLog(planId, key, '新增', labelOf(key, data))
     return data
   }
 
@@ -134,6 +136,8 @@ export const useContentStore = defineStore('content', () => {
     if (error) {
       Object.assign(row, before)
       console.warn(`[content] 更新 ${table} 失败:`, error.message)
+    } else {
+      await maybeLog(planId, key, '更新', labelOf(key, row))
     }
   }
 
@@ -165,7 +169,28 @@ export const useContentStore = defineStore('content', () => {
     }
     rows[planId][key] = rows[planId][key].filter((r) => r.id !== id) // 乐观删除
     const { error } = await supabase.from(table).delete().eq('id', id)
-    if (error) console.warn(`[content] 删除 ${table} 失败:`, error.message)
+    if (error) {
+      console.warn(`[content] 删除 ${table} 失败:`, error.message)
+    } else if (row) {
+      await maybeLog(planId, key, '删除', labelOf(key, row))
+    }
+  }
+
+  // ------------------------------------------------------------
+  // 行程变更日志(轻量留痕,尽力而为;失败不影响主流程)
+  // 路线日(days)的结构化内容(坐标/标题/地点)会高频变更,不写日志
+  // ------------------------------------------------------------
+  async function maybeLog(planId, key, verb, label) {
+    if (!isSupabase || key === 'days' || !planId || !label) return
+    try {
+      const auth = useAuthStore()
+      const actor = auth.user ? { id: auth.user.id, name: auth.user.name } : null
+      const text =
+        verb === '删除' ? `删除了「${label}」` : verb === '更新' ? `更新了「${label}」` : `新增了「${label}」`
+      await supabase.from('plan_logs').insert({ id: makeUuid(), plan_id: planId, actor, action: text })
+    } catch {
+      /* 日志失败不影响业务 */
+    }
   }
 
   /** 恢复最近一次删除 */
