@@ -10,7 +10,7 @@
 import { ref, reactive, computed, watch, onBeforeUnmount, nextTick } from 'vue'
 import { useContentStore } from '@/stores/content'
 import { useAuthStore } from '@/stores/auth'
-import { fmtDay, dayIndex, eachDayISO } from '@/utils/date'
+import { fmtDay, dayIndex, eachDayISO, parseISO } from '@/utils/date'
 import { uid, PASTEL_GRADS } from '@/utils/misc'
 import { geocodePlace, navUrl } from '@/api/geocode'
 import { fetchDailyWeather, wxMeta, wxTempText } from '@/api/weather'
@@ -483,6 +483,12 @@ async function ensureWeather(dateISO, force = false) {
       }
     }
   }
+  // Open-Meteo 免费源只提供未来约两周的预报:超出范围直接提示,不再请求
+  const daysAhead = Math.round((parseISO(dateISO) - new Date()) / 86400000)
+  if (daysAhead > 15) {
+    wx[dateISO] = 'range'
+    return
+  }
   const data = spot ? await fetchDailyWeather(spot.lat, spot.lng, dateISO) : null
   wx[dateISO] = data || null
 }
@@ -611,7 +617,7 @@ watch(
                 title="天气为目的地所在位置预报,点击刷新"
                 @click="ensureWeather(day.date, true)"
               >
-                <template v-if="wx[day.date] && wx[day.date] !== 'pending'">
+                <template v-if="wx[day.date] && typeof wx[day.date] === 'object'">
                   <i :class="`fa-solid ${wxMeta(wx[day.date].code).icon} text-amber`" aria-hidden="true"></i>
                   {{ wxTempText(wx[day.date]) }}
                   <span class="muted !text-[11px]">{{ wxMeta(wx[day.date].code).label }}</span>
@@ -619,6 +625,10 @@ watch(
                 <template v-else-if="wx[day.date] === 'pending'">
                   <i class="fa-solid fa-circle-notch" style="animation: spin 0.9s linear infinite" aria-hidden="true"></i>
                   <span class="muted !text-[11px]">天气</span>
+                </template>
+                <template v-else-if="wx[day.date] === 'range'">
+                  <i class="fa-solid fa-calendar-xmark text-muted" aria-hidden="true"></i>
+                  <span class="muted !text-[11px]">出发过早 · 临近再看</span>
                 </template>
                 <template v-else>
                   <i class="fa-solid fa-cloud" aria-hidden="true"></i>

@@ -262,6 +262,29 @@ export const useContentStore = defineStore('content', () => {
     rows[planId]._loading = false
   }
 
+  /**
+   * 云端创建/补全某天的路线行 —— 幂等 upsert:
+   * 按 (plan_id, date) 唯一键合并,服务器已有该行时不再报 409
+   */
+  async function upsertDayRow(planId, date) {
+    if (!isSupabase) return null
+    const { data, error } = await supabase
+      .from('route_days')
+      .upsert(
+        { id: makeUuid(), plan_id: planId, date, title: '', destinations: [] },
+        { onConflict: 'plan_id,date' }
+      )
+      .select()
+      .single()
+    if (error) {
+      console.warn('[content] 补全路线日失败:', error.message)
+      return null
+    }
+    ensureBucket(planId)
+    applyById(planId, 'days', data) // 以服务端行(id/默认值)为准
+    return data
+  }
+
   /** 依据计划日期范围补全缺失的每日占位行(演示/新计划初始都是空) */
   async function ensureDayRows(plan) {
     if (!plan || !plan.start_date || !plan.end_date) return
@@ -269,8 +292,13 @@ export const useContentStore = defineStore('content', () => {
     const have = new Set(bucket.days.map((d) => d.date))
     const missing = eachDayISO(plan.start_date, plan.end_date).filter((d) => !have.has(d))
     for (const date of missing) {
-      const row = { id: uid('day'), plan_id: plan.id, date, title: '', destinations: [] }
-      await remoteWrite(plan.id, 'route_days', 'days', row)
+      if (isSupabase) {
+        await upsertDayRow(plan.id, date)
+      } else {
+        await remoteWrite(plan.id, 'route_days', 'days', {
+          id: uid('day'), plan_id: plan.id, date, title: '', destinations: []
+        })
+      }
     }
   }
 
@@ -311,9 +339,13 @@ export const useContentStore = defineStore('content', () => {
 
   async function ensureDay(planId, date) {
     if (!findDay(planId, date)) {
-      await remoteWrite(planId, 'route_days', 'days', {
-        id: uid('day'), plan_id: planId, date, title: '', destinations: []
-      })
+      if (isSupabase) {
+        await upsertDayRow(planId, date)
+      } else {
+        await remoteWrite(planId, 'route_days', 'days', {
+          id: uid('day'), plan_id: planId, date, title: '', destinations: []
+        })
+      }
     }
   }
 
