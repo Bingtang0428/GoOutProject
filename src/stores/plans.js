@@ -38,14 +38,49 @@ export const usePlansStore = defineStore('plans', () => {
   const plans = ref([])
   const currentId = ref(localStorage.getItem(CURRENT_KEY) || null)
   const loaded = ref(false)
+  let initPromise = null // 防止并发重复 init 造成实时通道重复订阅
 
   const currentPlan = computed(() => plans.value.find((p) => p.id === currentId.value) || null)
 
-  /** 参与者 + 围观者 全体人员(用于分账、头像等) */
   const peopleOf = (plan) => [
     ...(plan?.members || []),
     ...(plan?.viewers || [])
   ]
+
+  /** 应用启动时调用一次:载入计划列表(并发安全) */
+  function init() {
+    if (loaded.value) return Promise.resolve()
+    if (initPromise) return initPromise
+    initPromise = (async () => {
+      if (!isSupabase) {
+        plans.value = ensureLocal()
+      } else {
+        // Supabase:订阅 plans 表实时变更 + 首次拉取
+        const { data, error } = await supabase.from('plans').select('*').order('created_at', { ascending: false })
+        if (!error) plans.value = (data || []).map(normalize)
+        const ch = supabase
+          .channel('plans-list')
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'plans' }, (payload) => applyRemote(payload))
+          .subscribe((status) => {
+            // 实时不可用时不重连轰炸;计划列表在每次进入页面时都会重新拉取
+            if (status && status !== 'SUBSCRIBED' && ch) {
+              supabase.removeChannel(ch).catch(() => {})
+            }
+          })
+        window.addEventListener('beforeunload', () => supabase.removeChannel(ch))
+        // 计划级纯轮询同步(每 60s),即使实时不可用也能收敛到最新
+        window.setInterval(async () => {
+          const { data: again } = await supabase.from('plans').select('*').order('created_at', { ascending: false })
+          if (again) plans.value = again.map(normalize)
+        }, 60000)
+      }
+      loaded.value = true
+      if (!currentId.value && plans.value.length) currentId.value = plans.value[0].id
+    })().finally(() => {
+      initPromise = null
+    })
+    return initPromise
+  }
 
   /** 兼容旧数据:补齐 owner_id/members/viewers 字段 */
   function normalize(p) {
@@ -61,25 +96,6 @@ export const usePlansStore = defineStore('plans', () => {
   function ensureLocal() {
     if (!localCache) localCache = localDb.loadPlans().map(normalize)
     return localCache
-  }
-
-  /** 应用启动时调用一次:载入计划列表 */
-  async function init() {
-    if (loaded.value) return
-    if (!isSupabase) {
-      plans.value = ensureLocal()
-    } else {
-      // Supabase:订阅 plans 表实时变更 + 首次拉取
-      const { data, error } = await supabase.from('plans').select('*').order('created_at', { ascending: false })
-      if (!error) plans.value = (data || []).map(normalize)
-      const ch = supabase
-        .channel('plans-list')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'plans' }, (payload) => applyRemote(payload))
-        .subscribe()
-      window.addEventListener('beforeunload', () => supabase.removeChannel(ch))
-    }
-    loaded.value = true
-    if (!currentId.value && plans.value.length) currentId.value = plans.value[0].id
   }
 
   function setCurrent(id) {
