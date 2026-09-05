@@ -270,26 +270,35 @@ export const useContentStore = defineStore('content', () => {
       )
     }
     ch.subscribe((status) => {
-      if (status !== 'SUBSCRIBED') {
-        console.warn('[content] 实时订阅未连接:', status, '→ 已启用 20s 轮询兜底')
-        if (!pollTimers[planId]) {
-          pollTimers[planId] = setInterval(() => pollRemote(planId), 20000)
+      if (status === 'SUBSCRIBED') {
+        // 通道可用:停掉轮询兜底,走实时
+        if (pollTimers[planId]) {
+          clearInterval(pollTimers[planId])
+          delete pollTimers[planId]
         }
-      } else if (pollTimers[planId]) {
-        clearInterval(pollTimers[planId])
-        delete pollTimers[planId]
+        return
+      }
+      // 连接失败/超时/关闭:不再让 supabase-js 反复重连,
+      // 移除通道后进入纯 20s 轮询模式(适合国内网络)
+      if (channels[planId] && channels[planId] !== 'poll') {
+        supabase.removeChannel(ch).catch(() => {})
+        channels[planId] = 'poll'
+      }
+      if (!pollTimers[planId]) {
+        console.warn('[content] 实时订阅不可用(TIMED_OUT/CLOSED)→ 已切换为 20s 轮询兜底')
+        pollTimers[planId] = setInterval(() => pollRemote(planId), 20000)
       }
     })
     channels[planId] = ch
   }
 
-  /** 离开计划时释放通道(避免多计划通道堆积) */
+  /** 离开计划时释放通道/轮询 */
   function detachRemote(planId) {
     const ch = channels[planId]
-    if (ch && supabase) {
-      supabase.removeChannel(ch)
-      delete channels[planId]
+    if (ch && ch !== 'poll' && supabase) {
+      supabase.removeChannel(ch).catch(() => {})
     }
+    delete channels[planId]
     if (pollTimers[planId]) {
       clearInterval(pollTimers[planId])
       delete pollTimers[planId]
