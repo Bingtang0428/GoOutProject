@@ -248,12 +248,24 @@ export const useContentStore = defineStore('content', () => {
   }
 
   // ------------------------------------------------------------
-  // 实时通道:单计划多表订阅
+  // 实时通道:单计划多表订阅;本会话首次失败后停用实时,改纯轮询
   // ------------------------------------------------------------
+  let realtimeDisabled = false
+  let warnedOnce = false
+
+  function startPoll(planId) {
+    if (pollTimers[planId]) return
+    pollTimers[planId] = setInterval(() => pollRemote(planId), 20000)
+  }
+
   function subscribeRemote(planId) {
-    if (!isSupabase || channels[planId]) return
-    const ch = supabase
-      .channel(`plan-content-${planId}`)
+    if (!isSupabase || channels[planId] || channels[planId] === 'poll') return
+    if (realtimeDisabled) {
+      channels[planId] = 'poll'
+      startPoll(planId)
+      return
+    }
+    const ch = supabase.channel(`plan-content-${planId}`)
     for (const [key, table] of Object.entries(TABLES)) {
       ch.on(
         'postgres_changes',
@@ -271,22 +283,21 @@ export const useContentStore = defineStore('content', () => {
     }
     ch.subscribe((status) => {
       if (status === 'SUBSCRIBED') {
-        // 通道可用:停掉轮询兜底,走实时
+        realtimeDisabled = false
         if (pollTimers[planId]) {
           clearInterval(pollTimers[planId])
           delete pollTimers[planId]
         }
         return
       }
-      // 连接失败/超时/关闭:不再让 supabase-js 反复重连,
-      // 移除通道后进入纯 20s 轮询模式(适合国内网络)
-      if (channels[planId] && channels[planId] !== 'poll') {
-        supabase.removeChannel(ch).catch(() => {})
-        channels[planId] = 'poll'
-      }
-      if (!pollTimers[planId]) {
-        console.warn('[content] 实时订阅不可用(TIMED_OUT/CLOSED)→ 已切换为 20s 轮询兜底')
-        pollTimers[planId] = setInterval(() => pollRemote(planId), 20000)
+      // 连接失败/超时/关闭:本会话不再重连,全部计划直接纯轮询
+      realtimeDisabled = true
+      supabase.removeChannel(ch).catch(() => {})
+      channels[planId] = 'poll'
+      startPoll(planId)
+      if (!warnedOnce) {
+        warnedOnce = true
+        console.warn('[content] 实时订阅不可用 → 本会话已切换为 20s 轮询同步')
       }
     })
     channels[planId] = ch
