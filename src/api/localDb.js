@@ -19,7 +19,7 @@ export function read(key, fallback = null) {
   }
 }
 
-export const CONTENT_KEYS = ['days', 'stays', 'todos', 'guides', 'reminders', 'bills', 'comments', 'transits', 'vehicle', 'fuel', 'memories']
+export const CONTENT_KEYS = ['days', 'stays', 'todos', 'guides', 'reminders', 'bills', 'comments', 'transits', 'vehicle', 'fuel', 'memories', 'gcomments']
 
 export function write(key, value) {
   try {

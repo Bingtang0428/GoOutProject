@@ -20,6 +20,7 @@ import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseTag from '@/components/ui/BaseTag.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import Avatar from '@/components/ui/Avatar.vue'
+import GeoPlacePicker from '@/components/ui/GeoPlacePicker.vue'
 import 'leaflet/dist/leaflet.css'
 
 const props = defineProps({
@@ -414,16 +415,32 @@ onBeforeUnmount(() => {
   clearTimeout(noteTimer)
 })
 
-/* ---------------- 添加目的地 ---------------- */
+/* ---------------- 添加 / 校正 目的地 ---------------- */
 const showAdd = ref(false)
-const destForm = reactive({ date: '', place: '', time: '', note: '', driveMin: '' })
+const destEdit = ref(null) // {day, dest} | null(null=新增)
+const destForm = reactive({ date: '', geo: null, time: '', note: '', driveMin: '' })
 
 function openAdd(date) {
+  destEdit.value = null
   destForm.date = date || days.value[0]?.date || props.plan.start_date
-  destForm.place = ''
+  destForm.geo = null
   destForm.time = ''
   destForm.note = ''
   destForm.driveMin = ''
+  showAdd.value = true
+}
+
+/** 校正某地点的精确定位(复用弹窗,保存即更新) */
+function openDestEdit(day, dest) {
+  destEdit.value = { day, dest }
+  destForm.date = day.date
+  destForm.geo =
+    typeof dest.lat === 'number' && typeof dest.lng === 'number'
+      ? { name: dest.place, label: dest.place, lat: dest.lat, lng: dest.lng }
+      : { name: dest.place, lat: null, lng: null }
+  destForm.time = dest.time || ''
+  destForm.note = dest.note || ''
+  destForm.driveMin = dest.drive_min || ''
   showAdd.value = true
 }
 
@@ -433,23 +450,29 @@ function chooseFirstFreeDay() {
 }
 
 async function saveDest() {
-  if (!destForm.place.trim() || !destForm.date) return
-  const destId = uid('x')
-  await store.addDestination(props.plan.id, destForm.date, {
-    id: destId,
-    place: destForm.place.trim(),
+  const place = destForm.geo?.name?.trim()
+  if (!place || !destForm.date) return
+  const patch = {
+    place,
     time: destForm.time || '',
     note: destForm.note.trim(),
-    drive_min: destForm.driveMin ? Number(destForm.driveMin) : null
-  })
-  showAdd.value = false
-  // 后台定位坐标,并自动尝试计算“上一站→本站”时长
-  const item = flattenDests().find((it) => it.dest.id === destId)
-  if (item && props.canEdit) {
-    autoCalcLeg(item.day, item.dest) // 不阻塞表单关闭
-  } else if (item) {
-    coordOf(item)
+    drive_min: destForm.driveMin ? Number(destForm.driveMin) : null,
+    lat: destForm.geo.lat ?? null,
+    lng: destForm.geo.lng ?? null
   }
+  if (destEdit.value) {
+    // 校正模式:直接更新该地点(含坐标)
+    await store.updateDestinationFields(props.plan.id, destEdit.value.day.date, destEdit.value.dest.id, patch)
+    destEdit.value = null
+    showAdd.value = false
+    return
+  }
+  // 新增:先落库地点与坐标(自动算时长会基于确认过的坐标,不再猜)
+  const destId = uid('x')
+  await store.addDestination(props.plan.id, destForm.date, { id: destId, ...patch })
+  showAdd.value = false
+  const item = flattenDests().find((it) => it.dest.id === destId)
+  if (item && props.canEdit) autoCalcLeg(item.day, item.dest)
 }
 
 async function onTitleChange(day, e) {
@@ -867,6 +890,9 @@ watch(
                     </div>
                   </div>
                   <div class="col-span-2 flex items-center gap-1 pt-1 pl-[76px] sm:col-span-1 sm:pl-0 sm:pt-0">
+                    <button v-if="canEdit" class="icon-btn !h-7 !w-7" title="校正精确定位" @click="openDestEdit(day, d)">
+                      <i class="fa-solid fa-location-crosshairs text-[11px]" aria-hidden="true"></i>
+                    </button>
                     <button
                       class="btn btn-ghost btn-sm !px-2.5"
                       @click="toggleComments(day.date, d.id)"
@@ -991,7 +1017,7 @@ watch(
     </EmptyState>
 
     <!-- 新增目的地弹窗 -->
-    <BaseModal v-model="showAdd" title="添加目的地" :max-width="'480px'">
+    <BaseModal v-model="showAdd" :title="destEdit ? '校正地点位置' : '添加目的地'" :max-width="'480px'">
       <div class="space-y-5">
         <div>
           <label class="flabel">安排在哪一天</label>
@@ -1009,8 +1035,8 @@ watch(
           </div>
         </div>
         <div>
-          <label class="flabel">地点名称 *</label>
-          <input v-model="destForm.place" class="field" placeholder="例如:屯溪老街停车场" maxlength="40" />
+          <label class="flabel">地点名称 * 请在候选中确认精确定位</label>
+          <GeoPlacePicker v-model="destForm.geo" :hint="plan.start_city" placeholder="输入并选择准确地点,如:屯溪老街停车场" />
         </div>
         <div class="grid grid-cols-2 gap-4">
           <div>
@@ -1039,7 +1065,9 @@ watch(
       </div>
       <template #footer>
         <BaseButton variant="ghost" @click="showAdd = false">取消</BaseButton>
-        <BaseButton icon="fa-check" :disabled="!destForm.place.trim()" @click="saveDest">加入行程</BaseButton>
+        <BaseButton icon="fa-check" :disabled="!(destForm.geo?.name || '').trim()" @click="saveDest">
+          {{ destEdit ? '保存校正' : '加入行程' }}
+        </BaseButton>
       </template>
     </BaseModal>
 

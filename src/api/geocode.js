@@ -116,6 +116,43 @@ export function navUrl(place, wgs) {
   return `https://uri.amap.com/search?keyword=${name}`
 }
 
+/**
+ * 精确选点:返回候选列表(带坐标/区县城市),供用户确认选择
+ * hint=计划集合城市,用于消除同名歧义
+ */
+export async function searchPlaces(raw, hint = '') {
+  const q = cleanQuery(raw)
+  if (!q || q.length < 2) return []
+  const tries = [q]
+  if (hint) tries.push(`${hint} ${q}`)
+  const out = []
+  const seen = new Set()
+  for (const t of tries) {
+    try {
+      const u = new URL('https://photon.komoot.io/api/')
+      u.searchParams.set('q', t)
+      u.searchParams.set('limit', '6')
+      const res = await fetch(u.toString())
+      if (!res.ok) continue
+      const j = await res.json()
+      for (const f of j.features || []) {
+        const p = f.properties || {}
+        const g = f.geometry?.coordinates || []
+        const name = p.name || p.osm_value || ''
+        const region = [p.district, p.county, p.city, p.state].filter(Boolean).join(' · ')
+        const label = region ? `${name} · ${region}` : name
+        if (!name || seen.has(label)) continue
+        seen.add(label)
+        out.push({ label, name, lat: g[1], lng: g[0] })
+      }
+      if (out.length >= 4) break
+    } catch {
+      /* continue */
+    }
+  }
+  return out.slice(0, 8)
+}
+
 /* ---------------- WGS84 → GCJ-02(火星坐标) ---------------- */
 const PI = Math.PI
 const A = 6378245.0

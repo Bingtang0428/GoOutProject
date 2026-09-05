@@ -62,9 +62,14 @@ create table if not exists public.stays (
   booked     boolean not null default false,
   assignee   jsonb,                                   -- 负责成员 {id,name}
   day        smallint,                                -- 第几天(1=出发日),食宿按天分组
+  latitude   double precision,                        -- 精确定位(经选点器确认)
+  longitude  double precision,
   created_at timestamptz not null default now()
 );
-alter table public.stays add column if not exists assignee jsonb;`r`nalter table public.stays add column if not exists day smallint;
+alter table public.stays add column if not exists assignee jsonb;
+alter table public.stays add column if not exists day smallint;
+alter table public.stays add column if not exists latitude double precision;
+alter table public.stays add column if not exists longitude double precision;
 
 -- TODO 清单(assignee = 指派给谁,分工用)
 create table if not exists public.todos (
@@ -77,7 +82,8 @@ create table if not exists public.todos (
   day        smallint,                                -- 第几天(1=出发日),待办按天分组
   created_at timestamptz not null default now()
 );
-alter table public.todos add column if not exists assignee jsonb;`r`nalter table public.todos add column if not exists day smallint;
+alter table public.todos add column if not exists assignee jsonb;
+alter table public.todos add column if not exists day smallint;
 
 -- 收藏攻略
 create table if not exists public.guides (
@@ -86,6 +92,16 @@ create table if not exists public.guides (
   title      text not null,
   url        text not null default '',                -- 来源链接
   image      text not null default '',                -- 封面(storage 地址或外链)
+  created_at timestamptz not null default now()
+);
+
+-- 攻略评论
+create table if not exists public.guide_comments (
+  id         uuid primary key default gen_random_uuid(),
+  guide_id   uuid not null references public.guides(id) on delete cascade,
+  plan_id    uuid not null references public.plans(id) on delete cascade,
+  text       text not null,
+  author     jsonb,
   created_at timestamptz not null default now()
 );
 

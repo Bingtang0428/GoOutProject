@@ -10,6 +10,7 @@ import BaseModal from '@/components/ui/BaseModal.vue'
 import Avatar from '@/components/ui/Avatar.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseTag from '@/components/ui/BaseTag.vue'
+import GeoPlacePicker from '@/components/ui/GeoPlacePicker.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 
 const props = defineProps({
@@ -56,7 +57,7 @@ const groupsForShow = computed(() => {
 // —— 新增 / 编辑弹窗
 const showEdit = ref(false)
 const editingId = ref(null) // null = 新增
-const form = reactive({ type: 'stay', name: '', address: '', phone: '', tags: [], booked: false, tagInput: '', assignee: null, day: null })
+const form = reactive({ type: 'stay', name: '', geo: null, phone: '', tags: [], booked: false, tagInput: '', assignee: null, day: null })
 
 const participants = computed(() => (props.plan.members || []).slice())
 
@@ -67,7 +68,7 @@ function mapUrl(address) {
 
 function openAdd() {
   editingId.value = null
-  Object.assign(form, { type: 'stay', name: '', address: '', phone: '', tags: [], booked: false, tagInput: '', assignee: null, day: null })
+  Object.assign(form, { type: 'stay', name: '', geo: null, phone: '', tags: [], booked: false, tagInput: '', assignee: null, day: null })
   showEdit.value = true
 }
 
@@ -76,7 +77,10 @@ function openEdit(item) {
   Object.assign(form, {
     type: item.type,
     name: item.name,
-    address: item.address,
+    geo:
+      typeof item.latitude === 'number' && typeof item.longitude === 'number'
+        ? { name: item.address || item.name, label: item.address, lat: item.latitude, lng: item.longitude }
+        : { name: item.address || '', lat: null, lng: null },
     phone: item.phone,
     tags: [...(item.tags || [])],
     booked: item.booked,
@@ -105,7 +109,9 @@ async function save() {
   const payload = {
     type: form.type,
     name: form.name.trim(),
-    address: form.address.trim(),
+    address: form.geo?.name?.trim() || '',
+    latitude: form.geo?.lat ?? null,
+    longitude: form.geo?.lng ?? null,
     phone: form.phone.trim(),
     tags: form.tags,
     booked: form.booked,
@@ -334,8 +340,8 @@ function tagTone(tag) {
           <input v-model="form.name" class="field" placeholder="酒店 / 餐厅名称" maxlength="40" />
         </div>
         <div>
-          <label class="flabel">地址</label>
-          <input v-model="form.address" class="field" placeholder="方便成员直接导航" maxlength="80" />
+          <label class="flabel">地址 / 位置(选择候选可精确定位,用于一键导航)</label>
+          <GeoPlacePicker v-model="form.geo" :hint="plan.start_city" placeholder="输入地址并选择准确位置,如:屯溪区延安路 8 号" />
         </div>
         <div>
           <label class="flabel">预订电话</label>

@@ -1,4 +1,4 @@
-// ============================================================
+﻿// ============================================================
 // 计划内容状态(路线/食宿/TODO/攻略/提醒)
 //
 // ★ 与 Supabase 的交互说明(关键部分均有注释)
@@ -32,7 +32,8 @@ const TABLES = {
   transits: 'transits', // 大交通企划
   vehicle: 'vehicles', // 车辆(每计划一行)
   fuel: 'fuel_logs', // 加油里程记录
-  memories: 'memories' // 旅行相册
+  memories: 'memories', // 旅行相册
+  gcomments: 'guide_comments' // 攻略评论
 }
 
 const CONTENT_KEYS = Object.keys(TABLES)
@@ -48,7 +49,8 @@ const EMPTY = () => ({
   transits: [],
   vehicle: [],
   fuel: [],
-  memories: []
+  memories: [],
+  gcomments: []
 })
 
 export const useContentStore = defineStore('content', () => {
@@ -741,6 +743,18 @@ export const useContentStore = defineStore('content', () => {
     return remoteDelete(planId, 'memories', 'memories', id)
   }
 
+  /** 攻略评论 */
+  function addGuideComment(planId, payload) {
+    return remoteWrite(planId, 'gcomments', 'gcomments', {
+      id: uid('gc'), plan_id: planId, guide_id: null, text: '', author: null,
+      ...payload, created_at: new Date().toISOString()
+    })
+  }
+
+  function removeGuideComment(planId, id) {
+    return remoteDelete(planId, 'gcomments', 'gcomments', id)
+  }
+
   /** 当天 Plan B 预案(雨天/备选路线等) */
   async function updateDayPlanB(planId, date, text) {
     const day = findDay(planId, date)
@@ -815,6 +829,8 @@ export const useContentStore = defineStore('content', () => {
     removeFuel,
     addMemory,
     removeMemory,
+    addGuideComment,
+    removeGuideComment,
     updateDayPlanB,
     lastDeleted,
     undoLast,

@@ -5,12 +5,15 @@
 // ============================================================
 import { ref, reactive, computed } from 'vue'
 import { useContentStore } from '@/stores/content'
+import { useAuthStore } from '@/stores/auth'
 import { isSupabase, storageUrl, uploadCover } from '@/api/supabase'
+import { fetchLinkMeta } from '@/api/metadata'
 import { hostOf } from '@/utils/misc'
 import { fmtSavedAt } from '@/utils/date'
 import BaseModal from '@/components/ui/BaseModal.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseTag from '@/components/ui/BaseTag.vue'
+import Avatar from '@/components/ui/Avatar.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 
 const props = defineProps({
@@ -18,8 +21,61 @@ const props = defineProps({
   canEdit: { type: Boolean, default: true }
 })
 const store = useContentStore()
+const auth = useAuthStore()
 
 const guides = computed(() => store.rowsOf(props.plan.id, 'guides'))
+
+/* ---- 攻略评论 ---- */
+const gcomments = computed(() => store.rowsOf(props.plan.id, 'gcomments'))
+const openCmt = ref(null) // guideId | null
+const draftCmt = reactive({})
+const commentsOf = (gid) =>
+  gcomments.value.filter((c) => c.guide_id === gid).sort((a, b) => a.created_at.localeCompare(b.created_at))
+
+async function postComment(gid) {
+  const text = (draftCmt[gid] || '').trim()
+  if (!text) return
+  await store.addGuideComment(props.plan.id, {
+    guide_id: gid,
+    text,
+    author: auth.user ? { id: auth.user.id, name: auth.user.name } : null
+  })
+  draftCmt[gid] = ''
+}
+
+function canRemoveCmt(c) {
+  return (
+    props.canEdit &&
+    c.author &&
+    (c.author.id === auth.user?.id || c.author.name === auth.user?.name)
+  )
+}
+
+/* ---- 链接自动识别 ---- */
+const fetching = ref(false)
+const metaHint = ref('')
+
+async function autoDetect() {
+  const url = form.url.trim()
+  if (!/^https?:\/\//i.test(url)) {
+    metaHint.value = '先粘贴 https:// 开头的分享链接'
+    return
+  }
+  fetching.value = true
+  metaHint.value = ''
+  try {
+    const meta = await fetchLinkMeta(url)
+    if (meta) {
+      if (!form.title) form.title = meta.title || ''
+      if (!form.image && meta.image) form.image = meta.image
+      metaHint.value = meta.title ? '识别成功:标题与封面已自动填入,可继续修改' : '已识别链接,但未取到标题,请手动填写'
+    } else {
+      metaHint.value = '暂时无法自动识别(部分平台反爬/网络限制),请手动填写标题'
+    }
+  } finally {
+    fetching.value = false
+  }
+}
 
 // —— 新增收藏
 const showAdd = ref(false)
@@ -27,6 +83,7 @@ const form = reactive({ title: '', url: '', image: '', file: null, fileHint: '',
 
 function openAdd() {
   Object.assign(form, { title: '', url: '', image: '', file: null, fileHint: '', uploading: false })
+  metaHint.value = ''
   showAdd.value = true
 }
 
@@ -123,10 +180,20 @@ async function save() {
               </a>
               <template v-else>{{ g.title }}</template>
             </h3>
-            <div class="mt-3 flex items-center justify-between">
-              <a v-if="g.url" :href="g.url" target="_blank" rel="noopener" class="text-[12.5px] font-semibold text-primary hover:underline">
-                阅读原文 <i class="fa-solid fa-arrow-up-right-from-square text-[10px]" aria-hidden="true"></i>
-              </a>
+            <div class="mt-3 flex flex-wrap items-center justify-between gap-2">
+              <div class="flex items-center gap-2">
+                <button
+                  class="btn btn-ghost btn-sm !px-2.5"
+                  :class="openCmt === g.id ? '!text-primary !border-primary/50' : ''"
+                  @click="openCmt = openCmt === g.id ? null : g.id"
+                >
+                  <i class="fa-regular fa-message text-[11px]" aria-hidden="true"></i>
+                  评论{{ commentsOf(g.id).length ? ' ' + commentsOf(g.id).length : '' }}
+                </button>
+                <a v-if="g.url" :href="g.url" target="_blank" rel="noopener" class="text-[12.5px] font-semibold text-primary hover:underline">
+                  阅读原文 <i class="fa-solid fa-arrow-up-right-from-square text-[10px]" aria-hidden="true"></i>
+                </a>
+              </div>
               <button
                 v-if="canEdit"
                 class="icon-btn icon-btn-danger touch-reveal !h-7 !w-7 shrink-0 opacity-0 transition-opacity duration-200 group-hover:opacity-100"
@@ -136,6 +203,39 @@ async function save() {
                 <i class="fa-solid fa-trash-can text-[12px]" aria-hidden="true"></i>
               </button>
             </div>
+
+            <!-- 攻略评论线程 -->
+            <Transition name="fade">
+              <div v-if="openCmt === g.id" class="mt-3 space-y-2 rounded-[12px] bg-surface-2/50 p-3">
+                <div v-for="c in commentsOf(g.id)" :key="c.id" class="flex items-start gap-2.5">
+                  <Avatar :name="c.author?.name || '匿名'" :size="26" />
+                  <div class="min-w-0 flex-1">
+                    <p class="text-[12.5px] leading-relaxed text-ink-soft">
+                      <b class="font-semibold text-ink">{{ c.author?.name || '匿名' }}</b> {{ c.text }}
+                    </p>
+                    <p class="muted mt-0.5 text-[10.5px]">{{ fmtSavedAt(c.created_at) }}</p>
+                  </div>
+                  <button
+                    v-if="canRemoveCmt(c)"
+                    class="icon-btn icon-btn-danger !h-6 !w-6"
+                    title="删除"
+                    @click="store.removeGuideComment(plan.id, c.id)"
+                  >
+                    <i class="fa-solid fa-xmark text-[10px]" aria-hidden="true"></i>
+                  </button>
+                </div>
+                <div v-if="canEdit" class="flex gap-2 pt-1">
+                  <input
+                    v-model="draftCmt[g.id]"
+                    class="field !py-2 text-[13px]"
+                    :placeholder="commentsOf(g.id).length ? '补充你的看法…' : '第一个评论:这篇靠谱吗?'"
+                    maxlength="200"
+                    @keyup.enter="postComment(g.id)"
+                  />
+                  <BaseButton size="sm" :disabled="!(draftCmt[g.id] || '').trim()" @click="postComment(g.id)">发送</BaseButton>
+                </div>
+              </div>
+            </Transition>
           </div>
         </article>
       </TransitionGroup>
@@ -159,7 +259,16 @@ async function save() {
         </div>
         <div>
           <label class="flabel">原文链接 *</label>
-          <input v-model="form.url" class="field" placeholder="https://…" type="url" />
+          <div class="flex gap-2">
+            <input v-model="form.url" class="field flex-1" placeholder="粘贴小红书/B站/公众号等分享链接" type="url" @paste="setTimeout(autoDetect, 30)" />
+            <BaseButton variant="soft" size="sm" :loading="fetching" icon="fa-wand-magic-sparkles" @click="autoDetect">
+              自动识别
+            </BaseButton>
+          </div>
+          <p class="mt-1.5 flex items-center gap-1.5 text-[12px]" :class="metaHint.includes('成功') ? 'text-[#16a34a]' : metaHint ? 'text-amber' : 'text-muted'">
+            <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
+            {{ metaHint || '粘贴分享链接后点「自动识别」,自动带出标题和封面' }}
+          </p>
         </div>
         <div>
           <label class="flabel">封面图</label>
