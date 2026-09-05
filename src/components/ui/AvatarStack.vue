@@ -1,5 +1,7 @@
 <script setup>
 // 圆形叠放的头像组(超出数量以 +N 展示)
+import Avatar from './Avatar.vue'
+
 const props = defineProps({
   users: { type: Array, default: () => [] }, // [{id,name}]
   size: { type: Number, default: 30 },

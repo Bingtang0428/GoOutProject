@@ -6,6 +6,8 @@
 import { ref, computed } from 'vue'
 import { useContentStore } from '@/stores/content'
 import { relKey, fmtDay } from '@/utils/date'
+import BaseButton from '@/components/ui/BaseButton.vue'
+import BaseModal from '@/components/ui/BaseModal.vue'
 import BaseCheckbox from '@/components/ui/BaseCheckbox.vue'
 import BaseTag from '@/components/ui/BaseTag.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
