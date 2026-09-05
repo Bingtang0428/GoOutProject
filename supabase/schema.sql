@@ -10,6 +10,7 @@ create table if not exists public.plans (
   id          uuid primary key default gen_random_uuid(),
   name        text not null,                          -- 计划名称
   destination text not null default '',               -- 目的地
+  start_city  text not null default '',               -- 集合城市(省市下拉,大交通默认带入)
   start_date  date not null,                          -- 出发日期
   end_date    date not null,                          -- 返程日期
   gradient    int  not null default 0,                -- 卡片柔和渐变配色索引
@@ -23,6 +24,7 @@ create table if not exists public.plans (
 alter table public.plans add column if not exists owner_id text;
 alter table public.plans add column if not exists viewers jsonb not null default '[]'::jsonb;
 alter table public.plans add column if not exists budget numeric(12,2);
+alter table public.plans add column if not exists start_city text not null default '';
 
 -- 每日路线(每日一行,destinations 为当天地点数组)
 create table if not exists public.route_days (

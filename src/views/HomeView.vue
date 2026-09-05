@@ -268,12 +268,12 @@ async function purgeOne(entry) {
               <h2 class="title-2">旅程看板</h2>
               <span class="chip chip-brand">{{ board.plan.name }}</span>
             </div>
-            <div class="flex flex-wrap gap-2">
+            <div class="no-scrollbar -mx-2 flex gap-2 overflow-x-auto px-2 py-0.5">
               <button
                 v-for="p in plansStore.plans"
                 :key="p.id"
-                class="chip cursor-pointer transition-all duration-200 active:scale-95"
-                :class="boardId === p.id ? 'chip-plain ring-1 ring-primary/50 text-primary' : 'chip-plain opacity-70'"
+                class="chip shrink-0 cursor-pointer whitespace-nowrap transition-all duration-200 active:scale-95"
+                :class="boardId === p.id ? 'ring-1 ring-primary/60 text-primary !bg-primary/10' : 'chip-plain opacity-70'"
                 @click="pickBoard(p.id)"
               >
                 {{ p.name }}

@@ -42,13 +42,13 @@ onBeforeUnmount(() => {
       >
         <Transition name="modal-panel">
           <div
-            class="modal card relative flex max-h-[92dvh] w-full flex-col rounded-b-none rounded-t-card p-6 sm:rounded-card sm:p-6"
+            class="modal card relative flex max-h-[92dvh] w-full flex-col rounded-b-none rounded-t-card p-5 sm:rounded-card sm:p-6"
             :style="{ maxWidth: maxWidth }"
             role="dialog"
             aria-modal="true"
           >
             <header class="flex items-center justify-between gap-4 pb-4">
-              <h3 class="title-1">{{ title }}</h3>
+              <h3 class="title-1 text-[17px] sm:text-[20px]">{{ title }}</h3>
               <button v-if="closable" class="icon-btn shrink-0" aria-label="关闭" @click="close">
                 <i class="fa-solid fa-xmark" aria-hidden="true"></i>
               </button>
@@ -56,7 +56,7 @@ onBeforeUnmount(() => {
             <div class="min-h-0 flex-1 overflow-y-auto pr-1">
               <slot />
             </div>
-            <footer v-if="$slots.footer" class="flex justify-end gap-12 pt-6">
+            <footer v-if="$slots.footer" class="flex flex-wrap justify-end gap-12 pt-5" style="padding-bottom: max(6px, env(safe-area-inset-bottom))">
               <slot name="footer" />
             </footer>
           </div>

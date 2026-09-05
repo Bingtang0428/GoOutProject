@@ -1,12 +1,32 @@
 ﻿// 通用小工具:ID 生成、柔和渐变配色、文本哈希
 
-/** 本地 id(Supabase 模式优先使用 uuid) */
+/**
+ * 本地 id。
+ * - 浏览器支持 crypto.randomUUID 时直接返回纯 UUID(后端 uuid 列必需,不能用前缀!)
+ * - 老环境回退到随机字符串(可带 prefix 便于阅读)
+ */
 export function uid(prefix = '') {
-  const rnd =
-    typeof crypto !== 'undefined' && crypto.randomUUID
-      ? crypto.randomUUID()
-      : Math.random().toString(36).slice(2) + Date.now().toString(36)
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID()
+  }
+  const rnd = Math.random().toString(36).slice(2) + Date.now().toString(36)
   return prefix ? `${prefix}-${rnd}` : rnd
+}
+
+/** 纯 UUID(不依赖 crypto.randomUUID,老环境也能生成),用于数据库 uuid 列 */
+export function makeUuid() {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID()
+  const t = (Date.now() + Math.random() * 1e12).toString(16)
+  const s = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16)
+  })
+  return `${s.slice(0, 14)}${t.slice(-4)}${s.slice(18)}`
+}
+
+/** 是否为合法 UUID(供数据库写入前校验) */
+export function isUuid(v) {
+  return typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v)
 }
 
 /** 计划卡片柔和渐变(豆沙粉为主、奶油/薄荷/丁香点缀) */

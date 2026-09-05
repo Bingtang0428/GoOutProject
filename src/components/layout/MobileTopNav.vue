@@ -22,7 +22,10 @@ watch(y, (v) => {
     class="top-nav sticky top-0 z-40 lg:hidden"
     :class="scrolled ? 'glass shadow-[0_4px_20px_rgba(15,23,42,0.05)]' : 'bg-transparent'"
   >
-    <div class="flex h-[54px] items-center gap-3 px-4" style="padding-top: env(safe-area-inset-top)">
+    <div
+      class="flex items-center gap-3 px-4"
+      style="padding-top: env(safe-area-inset-top); min-height: 52px"
+    >
       <button v-if="back" class="icon-btn shrink-0" aria-label="返回" @click="emit('back')">
         <i class="fa-solid fa-chevron-left" aria-hidden="true"></i>
       </button>

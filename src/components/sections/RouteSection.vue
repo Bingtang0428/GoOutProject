@@ -554,7 +554,8 @@ watch(
     <!-- ============ 地图视图 ============ -->
     <div v-if="view === 'map'" class="fade-up">
       <div class="card relative overflow-hidden !rounded-card">
-        <div ref="mapEl" class="h-[440px] w-full sm:h-[540px]"></div>
+        <!-- 高度自适应:小屏按视口比例,避免半屏被地图占掉 -->
+        <div ref="mapEl" class="h-[min(54vh,460px)] w-full sm:h-[540px]" style="min-height: 300px"></div>
         <span v-if="geoMissing" class="chip chip-amber absolute left-4 top-4 z-[500] shadow-sm">
           <i class="fa-solid fa-magnifying-glass-location" aria-hidden="true"></i>
           正在定位 {{ geoMissing }} 个地点…

@@ -67,9 +67,9 @@ function onClear() {
 </script>
 
 <template>
-  <div class="flex items-center gap-2">
+  <div class="flex flex-wrap items-center gap-2">
     <!-- 省 -->
-    <select v-model="provCode" class="field" :class="compact ? '!w-[7.5rem] !px-2.5 !py-1.5 !text-[13px]' : 'w-1/2'" @change="onProvinceChange">
+    <select v-model="provCode" class="field min-w-[6.5rem] flex-1" @change="onProvinceChange">
       <option value="" disabled>{{ placeholder.startsWith('选择') ? '选择省份' : placeholder }}</option>
       <option v-for="p in provs" :key="p.code" :value="p.code">{{ p.name }}</option>
     </select>
@@ -77,8 +77,7 @@ function onClear() {
     <!-- 市 -->
     <select
       v-if="provCode && !custom"
-      class="field"
-      :class="compact ? '!w-[8.5rem] !px-2.5 !py-1.5 !text-[13px]' : 'w-1/2'"
+      class="field min-w-[7rem] flex-1"
       :value="modelValue"
       :disabled="!cities.length"
       @change="onCityChange"
@@ -91,8 +90,7 @@ function onClear() {
     <input
       v-else-if="custom"
       v-model="customText"
-      class="field"
-      :class="compact ? '!w-[9rem] !px-2.5 !py-1.5 !text-[13px]' : 'w-1/2'"
+      class="field min-w-[7rem] flex-1"
       :placeholder="'手动输入(如海外城市)'"
       @input="emit('update:modelValue', customText)"
     />
@@ -101,8 +99,7 @@ function onClear() {
     <input
       v-else-if="!provCode"
       v-model="customText"
-      class="field"
-      :class="compact ? '!w-[8.5rem] !px-2.5 !py-1.5 !text-[13px]' : 'w-1/2'"
+      class="field min-w-[7rem] flex-1"
       :placeholder="placeholder"
       @input="emit('update:modelValue', customText); custom = true"
     />
@@ -110,7 +107,7 @@ function onClear() {
     <button
       v-if="modelValue"
       type="button"
-      class="icon-btn !h-7 !w-7 shrink-0"
+      class="icon-btn !h-8 !w-8 shrink-0"
       title="清除"
       @click="onClear"
     >
@@ -119,7 +116,7 @@ function onClear() {
     <button
       v-if="allowCustom && !custom"
       type="button"
-      class="btn btn-ghost btn-sm !px-2.5"
+      class="btn btn-ghost btn-sm !px-2.5 shrink-0"
       title="手动输入其他城市"
       @click="useCustom"
     >

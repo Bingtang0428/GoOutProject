@@ -197,10 +197,10 @@ onBeforeUnmount(() => {
       </template>
     </MobileTopNav>
 
-    <main class="min-h-dvh pb-32 lg:pl-[280px] lg:pb-16">
+    <main class="min-h-dvh pb-[7.5rem] lg:pl-[280px] lg:pb-16">
       <div class="wrap pt-2 sm:pt-6">
         <!-- 计划头部 Hero:标题 / 日期 / 成员 -->
-        <section class="card visual relative overflow-hidden p-6 sm:p-8" :style="gradStyle">
+        <section class="card visual relative overflow-hidden p-5 sm:p-8" :style="gradStyle">
           <span class="pointer-events-none absolute -right-10 -top-14 h-48 w-48 rounded-full bg-white/30 blur-2xl" style="mix-blend-mode: overlay"></span>
           <div class="relative flex flex-wrap items-start justify-between gap-6">
             <div class="min-w-0 flex-1">
@@ -214,7 +214,7 @@ onBeforeUnmount(() => {
                   {{ fmtRange(plan.start_date, plan.end_date) }} · {{ planDays(plan.start_date, plan.end_date) }} 天
                 </span>
               </div>
-              <h1 class="visual-title mb-1 break-words text-[24px] font-bold leading-tight sm:text-[30px]">
+              <h1 class="visual-title mb-1 break-words text-[22px] font-bold leading-tight sm:text-[30px]">
                 {{ plan.name }}
               </h1>
               <p class="visual-sub mb-3 text-[13px]">
@@ -314,7 +314,7 @@ onBeforeUnmount(() => {
     <Transition name="fade-up">
       <div
         v-if="undoSnack"
-        class="card no-print fixed bottom-[92px] left-1/2 z-[70] flex w-[min(92vw,420px)] -translate-x-1/2 items-center gap-3 px-5 py-3 lg:bottom-8"
+        class="card no-print fixed bottom-[7.2rem] left-1/2 z-[70] flex w-[min(92vw,420px)] -translate-x-1/2 items-center gap-3 px-5 py-3 lg:bottom-8"
         style="box-shadow: var(--shadow-pop)"
       >
         <i class="fa-solid fa-rotate-left text-primary" aria-hidden="true"></i>

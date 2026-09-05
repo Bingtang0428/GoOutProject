@@ -14,7 +14,7 @@
 // ============================================================
 import { defineStore } from 'pinia'
 import { ref, reactive } from 'vue'
-import { uid } from '@/utils/misc'
+import { uid, makeUuid, isUuid } from '@/utils/misc'
 import { supabase, isSupabase } from '@/api/supabase'
 import * as localDb from '@/api/localDb'
 import { eachDayISO } from '@/utils/date'
@@ -85,6 +85,10 @@ export const useContentStore = defineStore('content', () => {
 
   /** 写远端(超表):以本地先行,远端结果再回流合并;返回写入行 */
   async function remoteWrite(planId, table, key, row) {
+    if (isSupabase && !isUuid(row.id)) {
+      // ★ 数据库 uuid 列只接受纯 UUID;演示前缀 id(day-…/bill-…)在云端自动替换
+      row = { ...row, id: makeUuid() }
+    }
     if (!isSupabase) {
       await persistLocal(planId, key, (l) => l.unshift(row))
       return row

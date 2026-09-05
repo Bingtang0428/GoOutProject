@@ -13,7 +13,7 @@
 // ============================================================
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { uid } from '@/utils/misc'
+import { uid, makeUuid, isUuid } from '@/utils/misc'
 import { supabase, isSupabase } from '@/api/supabase'
 import * as localDb from '@/api/localDb'
 import { useAuthStore } from '@/stores/auth'
@@ -132,8 +132,9 @@ export const usePlansStore = defineStore('plans', () => {
       : [self]
     // 创建者必须在参与者名单中
     if (!members.some((m) => m.id === self.id)) members.unshift(self)
+    const planId = isSupabase ? makeUuid() : uid()
     const row = {
-      id: uid(),
+      id: planId,
       name: payload.name,
       destination: payload.destination || '',
       start_city: payload.start_city || '',
