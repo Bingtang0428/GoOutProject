@@ -23,3 +23,10 @@ console.info(
   `[兔兔同行] 版本 2026.09.07-3 · 模式:${isSupabase ? '云端(Supabase)' : '本地演示'}` +
     ` · URL:${import.meta.env.VITE_SUPABASE_URL || '(未配置)'}`
 )
+
+// PWA:生产环境注册 Service Worker(离线外壳 + 可安装)
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch((e) => console.warn('[pwa] 注册失败', e))
+  })
+}

@@ -1,4 +1,4 @@
--- =============================================================
+﻿-- =============================================================
 -- 同行 · 自驾旅行企划  —— Supabase 数据库结构
 -- 在 Supabase Dashboard → SQL Editor 中直接运行本文件。
 -- 注意: 演示阶段 RLS 全部放开(仅用于原型),上线前请务必收紧。
@@ -32,9 +32,22 @@ create table if not exists public.route_days (
   plan_id       uuid not null references public.plans(id) on delete cascade,
   date          date not null,
   title         text not null default '',             -- 当日主题,如 "合肥 → 黄山"
+  plan_b        text not null default '',             -- Plan B 雨天/备选预案
   destinations  jsonb not null default '[]'::jsonb,   -- [{id,place,note,time}]
   created_at    timestamptz not null default now(),
   unique (plan_id, date)
+);
+alter table public.route_days add column if not exists plan_b text not null default '';
+
+-- 旅行相册(按日期打卡,生成回忆册)
+create table if not exists public.memories (
+  id         uuid primary key default gen_random_uuid(),
+  plan_id    uuid not null references public.plans(id) on delete cascade,
+  day_date   date not null,
+  image      text not null,
+  note       text not null default '',
+  author     jsonb,
+  created_at timestamptz not null default now()
 );
 
 -- 食宿安排(type: stay=住宿 / food=餐饮)
@@ -109,6 +122,7 @@ create table if not exists public.plan_logs (
   at       timestamptz not null default now()
 );
 create index if not exists idx_plan_logs_plan on public.plan_logs(plan_id, at desc);
+create index if not exists idx_memories_plan on public.memories(plan_id, day_date desc);
 
 -- 邀请码登录(替代邮箱注册):码可设置使用次数 1-100
 create table if not exists public.invite_codes (
@@ -350,11 +364,12 @@ alter table public.vehicles   enable row level security;
 alter table public.fuel_logs  enable row level security;
 alter table public.invite_codes enable row level security;
 alter table public.plan_logs enable row level security;
+alter table public.memories enable row level security;
 
 do $$
 declare t text;
 begin
-  foreach t in array array['plans','route_days','stays','todos','guides','reminders','bills','comments','transits','vehicles','fuel_logs','invite_codes','plan_logs'] loop
+  foreach t in array array['plans','route_days','stays','todos','guides','reminders','bills','comments','transits','vehicles','fuel_logs','invite_codes','plan_logs','memories'] loop
     execute format('drop policy if exists "%s_all" on public.%I', t, t);
     execute format('create policy "%s_all" on public.%I for all using (true) with check (true)', t, t);
   end loop;

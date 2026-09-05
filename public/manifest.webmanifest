@@ -1,0 +1,19 @@
+{
+  "name": "兔兔同行 · 自驾旅行企划",
+  "short_name": "兔兔同行",
+  "description": "雨林通往雪景,你向往的旅行 ♪",
+  "lang": "zh-CN",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#FDFAFB",
+  "theme_color": "#B75973",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

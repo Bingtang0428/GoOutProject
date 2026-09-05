@@ -518,6 +518,30 @@ async function ensureWeather(dateISO, force = false) {
 }
 
 /** 内容就绪后逐个日期排队拉取(约 0.4s/日,避免触发限流) */
+/* ---------------- Plan B 雨天/备选预案 ---------------- */
+const planBShow = ref(false)
+const planBDay = ref(null)
+const planBText = ref('')
+
+/** 天气码是否属雨雪/雷雨等"需要预案"类型 */
+function rainOf(w) {
+  if (!w || typeof w === 'string') return false
+  const c = Number(w.code)
+  return c >= 51 && c <= 99
+}
+
+function openPlanB(day) {
+  planBDay.value = day
+  planBText.value = day.plan_b || ''
+  planBShow.value = true
+}
+
+async function savePlanB() {
+  if (!planBDay.value) return
+  await store.updateDayPlanB(props.plan.id, planBDay.value.date, planBText.value.trim())
+  planBShow.value = false
+}
+
 function scheduleWeatherScan() {
   if (wxScanner) clearTimeout(wxScanner)
   wxScanner = setTimeout(async () => {
@@ -634,6 +658,23 @@ watch(
               />
               <span v-else class="flex-1 truncate text-[14.5px] font-semibold text-ink-soft">{{ day.title || `第${dayIndex(plan.start_date, day.date)}天` }}</span>
               <span v-if="day.destinations?.length" class="ml-auto muted text-[12px]">{{ day.destinations.length }} 站</span>
+              <button
+                class="chip shrink-0 cursor-pointer !text-[11px]"
+                :class="day.plan_b ? 'chip-success' : 'chip-plain'"
+                :title="day.plan_b ? '查看/编辑 Plan B 预案' : '设置雨天/备选预案(Plan B)'"
+                @click="openPlanB(day)"
+              >
+                <i class="fa-solid fa-flag mr-1" aria-hidden="true"></i>
+                {{ day.plan_b ? '预案已备' : 'Plan B' }}
+              </button>
+              <!-- 雨天自动提示:预报有雨且还没备方案 -->
+              <button
+                v-if="canEdit && !day.plan_b && rainOf(wx[day.date])"
+                class="chip chip-amber shrink-0 cursor-pointer !text-[11px]"
+                @click="openPlanB(day)"
+              >
+                <span class="dot"></span>当日可能有雨,建议备好 Plan B
+              </button>
               <!-- 当日天气(首个地点所在地) -->
               <button
                 v-if="day.destinations?.length"
@@ -660,6 +701,18 @@ watch(
                 </template>
               </button>
             </header>
+
+            <!-- Plan B 预案展示 -->
+            <div
+              v-if="day.plan_b"
+              class="mx-5 mt-3 flex items-start gap-2.5 rounded-[12px] border border-amber/40 bg-amber/10 px-4 py-2.5 text-[12.5px] leading-relaxed text-ink-soft"
+            >
+              <i class="fa-solid fa-flag mt-0.5 text-amber" aria-hidden="true"></i>
+              <div class="min-w-0">
+                <b class="text-[11.5px] uppercase tracking-wider text-amber">Plan B 预案</b>
+                <p class="mt-0.5">{{ day.plan_b }}</p>
+              </div>
+            </div>
 
             <div v-if="day.destinations?.length" class="divide-y divide-line/60">
               <div v-for="d in day.destinations" :key="d.id">
@@ -921,6 +974,29 @@ watch(
       <template #footer>
         <BaseButton variant="ghost" @click="showAdd = false">取消</BaseButton>
         <BaseButton icon="fa-check" :disabled="!destForm.place.trim()" @click="saveDest">加入行程</BaseButton>
+      </template>
+    </BaseModal>
+
+    <!-- Plan B 预案编辑 -->
+    <BaseModal v-model="planBShow" title="Plan B 预案" :max-width="'460px'">
+      <p class="muted -mt-1 mb-3 text-[12.5px]">
+        {{ planBDay ? fmtDay(planBDay.date) : '' }} · 适合雨天、堵车或临时调整时启用
+      </p>
+      <textarea
+        v-model="planBText"
+        class="field"
+        rows="4"
+        placeholder="例如:若下雨则改游徽州古城(室内为主),晚餐改订老街第二家徽菜馆"
+      ></textarea>
+      <template #footer>
+        <BaseButton
+          variant="ghost"
+          @click="store.updateDayPlanB(plan.id, planBDay?.date, ''); planBShow = false"
+        >
+          清除预案
+        </BaseButton>
+        <BaseButton variant="ghost" @click="planBShow = false">取消</BaseButton>
+        <BaseButton icon="fa-flag" :disabled="!planBText.trim()" @click="savePlanB">保存预案</BaseButton>
       </template>
     </BaseModal>
   </section>

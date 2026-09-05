@@ -33,6 +33,8 @@ import TransitsSection from '@/components/sections/TransitsSection.vue'
 import PlanPermModal from '@/components/plan/PlanPermModal.vue'
 import ExportSheet from '@/components/plan/ExportSheet.vue'
 import ReportSheet from '@/components/plan/ReportSheet.vue'
+import MemorySheet from '@/components/plan/MemorySheet.vue'
+import IssuesSheet from '@/components/plan/IssuesSheet.vue'
 
 const plansStore = usePlansStore()
 const contentStore = useContentStore()
@@ -128,6 +130,8 @@ const showPerm = ref(false)
 const showExport = ref(false)
 const showLogs = ref(false)
 const showReport = ref(false)
+const showMemory = ref(false)
+const showIssues = ref(false)
 const planLogs = ref([])
 
 async function loadPlanLogs() {
@@ -219,6 +223,9 @@ onBeforeUnmount(() => {
         <button v-if="isSupabase" class="icon-btn" aria-label="最近动态" @click="openLogs">
           <i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i>
         </button>
+        <button class="icon-btn" aria-label="旅行相册" @click="showMemory = true">
+          <i class="fa-solid fa-images" aria-hidden="true"></i>
+        </button>
         <button class="icon-btn" aria-label="导出行程单" @click="showExport = true">
           <i class="fa-solid fa-file-export" aria-hidden="true"></i>
         </button>
@@ -279,6 +286,9 @@ onBeforeUnmount(() => {
             <div class="hidden items-center gap-2 md:flex">
               <button v-if="isSupabase" class="btn btn-ghost btn-sm" style="background: rgba(255,255,255,0.6)" @click="openLogs">
                 <i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i>最近动态
+              </button>
+              <button class="btn btn-ghost btn-sm" style="background: rgba(255,255,255,0.6)" @click="showIssues = true">
+                <i class="fa-solid fa-stethoscope" aria-hidden="true"></i>体检
               </button>
               <button class="btn btn-ghost btn-sm" style="background: rgba(255,255,255,0.6)" @click="showReport = true">
                 <i class="fa-solid fa-chart-pie" aria-hidden="true"></i>复盘
@@ -372,6 +382,8 @@ onBeforeUnmount(() => {
     <PlanPermModal v-if="isOwner" v-model="showPerm" :plan="plan" />
     <ExportSheet v-model="showExport" :plan="plan" />
     <ReportSheet v-model="showReport" :plan="plan" />
+    <MemorySheet v-model="showMemory" :plan="plan" :can-edit="canEdit" />
+    <IssuesSheet v-model="showIssues" :plan="plan" />
 
     <!-- 最近动态 -->
     <BaseModal v-model="showLogs" title="最近动态" :max-width="'480px'">

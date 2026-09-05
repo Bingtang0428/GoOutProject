@@ -31,7 +31,8 @@ const TABLES = {
   comments: 'comments', // 行程建议评论
   transits: 'transits', // 大交通企划
   vehicle: 'vehicles', // 车辆(每计划一行)
-  fuel: 'fuel_logs' // 加油里程记录
+  fuel: 'fuel_logs', // 加油里程记录
+  memories: 'memories' // 旅行相册
 }
 
 const CONTENT_KEYS = Object.keys(TABLES)
@@ -46,7 +47,8 @@ const EMPTY = () => ({
   comments: [],
   transits: [],
   vehicle: [],
-  fuel: []
+  fuel: [],
+  memories: []
 })
 
 export const useContentStore = defineStore('content', () => {
@@ -676,6 +678,34 @@ export const useContentStore = defineStore('content', () => {
     })
   }
 
+  /** 旅行相册:打卡照片记录 */
+  function addMemory(planId, payload) {
+    return remoteWrite(planId, 'memories', 'memories', {
+      id: uid('mem'), plan_id: planId, day_date: '', image: '', note: '',
+      author: null, ...payload, created_at: new Date().toISOString()
+    })
+  }
+
+  function removeMemory(planId, id) {
+    return remoteDelete(planId, 'memories', 'memories', id)
+  }
+
+  /** 当天 Plan B 预案(雨天/备选路线等) */
+  async function updateDayPlanB(planId, date, text) {
+    const day = findDay(planId, date)
+    if (!day) return
+    if (!isSupabase) {
+      await persistLocal(planId, 'days', (l) => {
+        const t = l.find((d) => d.date === date)
+        if (t) t.plan_b = text
+      })
+    } else {
+      day.plan_b = text
+      const { error } = await supabase.from('route_days').update({ plan_b: text }).eq('plan_id', planId).eq('date', date)
+      if (error) console.warn('[content] 更新 Plan B 失败:', error.message)
+    }
+  }
+
   function updateFuel(planId, id, patch) {
     return remoteUpdate(planId, 'fuel_logs', 'fuel', id, patch)
   }
@@ -730,6 +760,9 @@ export const useContentStore = defineStore('content', () => {
     addFuel,
     updateFuel,
     removeFuel,
+    addMemory,
+    removeMemory,
+    updateDayPlanB,
     lastDeleted,
     undoLast,
     clearUndo,
