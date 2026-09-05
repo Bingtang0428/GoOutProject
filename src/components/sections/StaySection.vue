@@ -24,18 +24,26 @@ const foodCount = computed(() => stays.value.filter((s) => s.type === 'food').le
 
 const PRESET_TAGS = ['免费停车', '含早', '人均¥100', '可带宠物']
 
+/* 类型维度:住宿 / 餐厅 分开看 */
+const typeFilter = ref('all') // all | stay | food
+const baseStays = computed(() =>
+  typeFilter.value === 'all' ? stays.value : stays.value.filter((s) => s.type === typeFilter.value)
+)
+
 /* Day 分组:第 N 天 = 出发日偏移 N-1;day=0 表示未定日 */
 const plannedDates = computed(() =>
   props.plan.start_date && props.plan.end_date ? eachDayISO(props.plan.start_date, props.plan.end_date) : []
 )
 const dayGroups = computed(() =>
-  plannedDates.value.map((date, i) => ({
-    day: i + 1,
-    label: `Day ${i + 1} · ${fmtDay(date, false)}`,
-    items: stays.value.filter((s) => s.day === i + 1)
-  }))
+  plannedDates.value
+    .map((date, i) => ({
+      day: i + 1,
+      label: `Day ${i + 1} · ${fmtDay(date, false)}`,
+      items: baseStays.value.filter((s) => s.day === i + 1)
+    }))
+    .filter((g) => g.items.length)
 )
-const noDayItems = computed(() => stays.value.filter((s) => !s.day))
+const noDayItems = computed(() => baseStays.value.filter((s) => !s.day))
 const filterDay = ref(null) // null=全部,0=未定日,N=第 N 天
 const groupsForShow = computed(() => {
   const groups = dayGroups.value.filter((g) => filterDay.value === null || g.day === filterDay.value)
@@ -136,19 +144,36 @@ function tagTone(tag) {
     </div>
 
     <!-- Day 分组标题与切换 -->
-    <template v-if="stays.length">
+    <template v-if="baseStays.length">
+    <!-- 住宿 / 餐厅分开看 -->
+    <div class="mb-4 flex flex-wrap gap-2">
+      <button
+        v-for="t in [
+          { key: 'all', label: '全部', icon: 'fa-layer-group' },
+          { key: 'stay', label: `住宿 · ${stays.filter((s) => s.type === 'stay').length}`, icon: 'fa-hotel' },
+          { key: 'food', label: `餐厅 · ${stays.filter((s) => s.type === 'food').length}`, icon: 'fa-utensils' }
+        ]"
+        :key="t.key"
+        class="chip cursor-pointer transition-all duration-150 active:scale-95"
+        :class="typeFilter === t.key ? 'chip-brand' : 'chip-plain'"
+        @click="typeFilter = t.key"
+      >
+        <i :class="`fa-solid ${t.icon}`" aria-hidden="true"></i>{{ t.label }}
+      </button>
+    </div>
+
     <div class="mb-4 flex flex-wrap gap-2">
       <button
         class="chip cursor-pointer transition-all duration-150 active:scale-95"
         :class="filterDay === null ? 'chip-brand' : 'chip-plain'"
         @click="filterDay = null"
-      >全部 · {{ stays.length }}</button>
+      >全部日期 · {{ baseStays.length }}</button>
       <button
         v-for="g in dayGroups"
         :key="g.day"
         class="chip cursor-pointer whitespace-nowrap transition-all duration-150 active:scale-95"
         :class="filterDay === g.day ? 'chip-brand' : 'chip-plain'"
-        @click="filterDay = g.day"
+        @click="filterDay = filterDay === g.day ? null : g.day"
       >
         {{ g.label }} · {{ g.items.length }}
       </button>
@@ -156,7 +181,7 @@ function tagTone(tag) {
         v-if="noDayItems.length"
         class="chip chip-amber cursor-pointer whitespace-nowrap transition-all duration-150 active:scale-95"
         :class="filterDay === 0 ? '!bg-rose/20 !text-rose' : ''"
-        @click="filterDay = 0"
+        @click="filterDay = filterDay === 0 ? null : 0"
       >未定日 · {{ noDayItems.length }}</button>
     </div>
 

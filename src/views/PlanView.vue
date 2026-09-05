@@ -55,7 +55,7 @@ const SECTIONS = [
   { key: 'todo', icon: 'fa-list-check', label: '待办清单' },
   { key: 'guide', icon: 'fa-bookmark', label: '收藏攻略' },
   { key: 'reminder', icon: 'fa-bell', label: '提醒事项' },
-  { key: 'bill', icon: 'fa-scale-balanced', label: '分账' },
+  { key: 'bill', icon: 'fa-scale-balanced', label: '分账&车辆' },
   { key: 'transit', icon: 'fa-plane-departure', label: '大交通' }
 ]
 
@@ -243,6 +243,13 @@ onBeforeUnmount(() => {
 
     <main class="min-h-dvh pb-[7.5rem] lg:pl-[280px] lg:pb-16">
       <div class="wrap pt-2 sm:pt-6">
+        <!-- 桌面端返回首页 -->
+        <button
+          class="mb-3 hidden items-center gap-1.5 text-[13px] font-semibold text-muted transition-colors hover:text-primary md:inline-flex"
+          @click="backHome"
+        >
+          <i class="fa-solid fa-chevron-left text-[10px]" aria-hidden="true"></i>我的计划
+        </button>
         <!-- 计划头部 Hero:标题 / 日期 / 成员 -->
         <section class="card visual relative overflow-hidden p-5 sm:p-8" :style="gradStyle">
           <span class="pointer-events-none absolute -right-10 -top-14 h-48 w-48 rounded-full bg-white/30 blur-2xl" style="mix-blend-mode: overlay"></span>

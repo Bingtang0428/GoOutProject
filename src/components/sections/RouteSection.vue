@@ -14,7 +14,7 @@ import { fmtDay, dayIndex, eachDayISO, parseISO } from '@/utils/date'
 import { uid, PASTEL_GRADS } from '@/utils/misc'
 import { geocodePlace, navUrl } from '@/api/geocode'
 import { fetchDailyWeather, wxMeta, wxTempText } from '@/api/weather'
-import { drivingMinutes, transitMinutes, fmtMinute } from '@/api/route'
+import { drivingLeg, transitMinutes, fmtMinute } from '@/api/route'
 import BaseModal from '@/components/ui/BaseModal.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseTag from '@/components/ui/BaseTag.vue'
@@ -165,12 +165,14 @@ async function autoCalcLeg(day, dest) {
     const a = await coordOf(prevItem)
     const b = await coordOf({ di: idx, day, dest })
     if (!a || !b) return false
-    const drive = await drivingMinutes(a, b)
+    const leg = await drivingLeg(a, b)
+    const drive = leg?.min
     const transit = transitMinutes(drive)
     if (!drive) return false
     await store.updateDestinationFields(props.plan.id, day.date, dest.id, {
       drive_min: drive,
-      transit_min: transit
+      transit_min: transit,
+      distance_km: leg?.km ?? null
     })
     if (view.value === 'map') drawSegments() // 地图同步刷新路段
     return true

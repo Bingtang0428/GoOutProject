@@ -56,16 +56,16 @@ function logout() {
 
 <template>
   <aside class="fixed inset-y-0 left-0 z-40 hidden w-[280px] flex-col border-r border-line/70 bg-surface/80 backdrop-blur-xl lg:flex">
-    <!-- 品牌 -->
-    <div class="flex items-center gap-3 px-6 pb-4 pt-6">
+    <!-- 品牌(点击回首页) -->
+    <button type="button" class="flex items-center gap-3 px-6 pb-4 pt-6 text-left" @click="router.push('/')">
       <span class="flex h-10 w-10 items-center justify-center rounded-xl bg-primary text-white shadow-[0_8px_20px_rgb(183_89_115/0.35)]">
         <i class="fa-solid fa-map-location-dot text-[17px]" aria-hidden="true"></i>
       </span>
-      <div>
-        <p class="text-[17px] font-semibold leading-tight text-ink">兔兔同行</p>
-        <p class="text-[11px] text-muted">雨林通往雪景 ♪</p>
-      </div>
-    </div>
+      <span>
+        <span class="block text-[17px] font-semibold leading-tight text-ink">兔兔同行</span>
+        <span class="block text-[11px] text-muted">雨林通往雪景 ♪</span>
+      </span>
+    </button>
 
     <!-- 计划列表 -->
     <div class="flex items-center justify-between px-6 pb-2 pt-2">

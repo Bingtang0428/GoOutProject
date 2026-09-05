@@ -16,32 +16,45 @@ export function distKm(a, b) {
   return 2 * R * Math.asin(Math.sqrt(h))
 }
 
-const cache = new Map() // 'lat,lng|lat,lng' -> minutes
+const cache = new Map() // 'lat,lng|lat,lng' -> {min, km}
 
-/** 估算自驾分钟(OSRM duration,秒 → 分钟,向上取整) */
-export async function drivingMinutes(a, b, force = false) {
+/** 估算自驾(OSRM):返回 { min: 分钟, km: 公里 } */
+export async function drivingLeg(a, b, force = false) {
   if (!a || !b || !a.lat || !a.lng || !b.lat || !b.lng) return null
   const key = `${a.lat},${a.lng}|${b.lat},${b.lng}`
   if (cache.has(key) && !force) return cache.get(key)
-  let minutes = null
+  let min = null
+  let km = null
   try {
     const res = await fetch(
       `https://router.project-osrm.org/route/v1/driving/${a.lng},${a.lat};${b.lng},${b.lat}?overview=false&steps=false`
     )
     if (res.ok) {
       const json = await res.json()
-      const dur = json?.routes?.[0]?.duration
-      if (typeof dur === 'number' && dur > 0) minutes = Math.ceil(dur / 60)
+      const r = json?.routes?.[0]
+      if (r) {
+        if (typeof r.duration === 'number' && r.duration > 0) min = Math.ceil(r.duration / 60)
+        if (typeof r.distance === 'number' && r.distance > 0) km = Math.round((r.distance / 1000) * 10) / 10
+      }
     }
   } catch {
     /* fall through */
   }
-  if (!minutes) {
-    // 直线距离按平均 60km/h 兜底
-    minutes = Math.max(1, Math.ceil((distKm(a, b) / 60) * 60))
+  if (!min || !km) {
+    // 直线距离兜底:距离 ×1.25 路网系数,均速 60km/h
+    const straight = distKm(a, b)
+    km = km ?? Math.round(straight * 1.25 * 10) / 10
+    min = min ?? Math.max(1, Math.ceil((straight / 60) * 60))
   }
-  cache.set(key, minutes)
-  return minutes
+  const out = { min, km }
+  cache.set(key, out)
+  return out
+}
+
+/** 兼容旧调用:仅返回分钟 */
+export async function drivingMinutes(a, b, force = false) {
+  const leg = await drivingLeg(a, b, force)
+  return leg ? leg.min : null
 }
 
 /** 公共交通时长估算(分钟):公交/高铁综合按“自驾×1.25+40 起步” */

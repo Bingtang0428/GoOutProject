@@ -5,7 +5,7 @@
 //  - 统计:总里程、加油量、估算百公里油耗、每公里成本
 //  - 加油可一键「同步进分账(油费)」,与账单联动
 // ============================================================
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, watch } from 'vue'
 import { useContentStore } from '@/stores/content'
 import { fmtDay, todayISO } from '@/utils/date'
 import { money } from '@/utils/money'
@@ -19,8 +19,19 @@ const props = defineProps({
 })
 const store = useContentStore()
 
+/* 多车支持:vehicles 为列表,vehicle 为当前选中的一辆 */
+const vehicles = computed(() => store.rowsOf(props.plan.id, 'vehicle'))
+const vehicleSel = ref(null)
+const vehicle = computed(() => vehicles.value.find((v) => v.id === vehicleSel.value) || null)
+watch(
+  vehicles,
+  (list) => {
+    if (!list.some((v) => v.id === vehicleSel.value)) vehicleSel.value = list[0]?.id ?? null
+  },
+  { immediate: true }
+)
+
 const logs = computed(() => store.rowsOf(props.plan.id, 'fuel').slice().sort((a, b) => (a.date || '').localeCompare(b.date || '')))
-const vehicle = computed(() => store.currentVehicle(props.plan.id))
 
 const people = computed(() => {
   const list = [...(props.plan.members || [])]
@@ -31,24 +42,54 @@ const people = computed(() => {
   return list
 })
 
-/* ---------- 车辆信息 ---------- */
-const vehForm = reactive({ name: '', plate: '', capacity: '', cons: '' })
+/* ---------- 车辆信息(多车 + 燃油/混动/纯电) ---------- */
+import { makeUuid } from '@/utils/misc'
 
-function editVehicle() {
-  vehForm.name = vehicle.value?.name || ''
-  vehForm.plate = vehicle.value?.plate || ''
-  vehForm.capacity = vehicle.value?.capacity_l ? String(vehicle.value.capacity_l) : ''
-  vehForm.cons = vehicle.value?.cons_l100 ? String(vehicle.value.cons_l100) : ''
+const vehForm = reactive({
+  id: null, name: '', plate: '', power: 'gas',
+  capacity: '', cons: '', battery: '', kwh100: ''
+})
+
+function loadDraft(v) {
+  vehForm.id = v?.id || null
+  vehForm.name = v?.name || ''
+  vehForm.plate = v?.plate || ''
+  vehForm.power = v?.power || 'gas'
+  vehForm.capacity = v?.capacity_l ? String(v.capacity_l) : ''
+  vehForm.cons = v?.cons_l100 ? String(v.cons_l100) : ''
+  vehForm.battery = v?.battery_kwh ? String(v.battery_kwh) : ''
+  vehForm.kwh100 = v?.kwh_100 ? String(v.kwh_100) : ''
 }
 
-async function saveVehicle() {
+watch(vehicle, (v) => loadDraft(v), { immediate: true })
+watch(vehForm, () => (formDirty.value = true))
+const formDirty = ref(false)
+
+async function saveVehicleInfo() {
   const num = (v) => (v === '' || v == null ? null : Number(v))
   await store.saveVehicle(props.plan.id, {
+    id: vehForm.id || undefined,
     name: vehForm.name.trim(),
     plate: vehForm.plate.trim(),
-    capacity_l: num(vehForm.capacity) > 0 ? num(vehForm.capacity) : null,
-    cons_l100: num(vehForm.cons) > 0 ? num(vehForm.cons) : null
+    power: vehForm.power,
+    capacity_l: vehForm.power === 'ev' ? null : num(vehForm.capacity) > 0 ? num(vehForm.capacity) : null,
+    cons_l100: vehForm.power === 'ev' ? null : num(vehForm.cons) > 0 ? num(vehForm.cons) : null,
+    battery_kwh: vehForm.power === 'ev' ? (num(vehForm.battery) > 0 ? num(vehForm.battery) : null) : null,
+    kwh_100: vehForm.power === 'ev' ? (num(vehForm.kwh100) > 0 ? num(vehForm.kwh100) : null) : null
   })
+  formDirty.value = false
+}
+
+async function addNewVehicle() {
+  const vid = makeUuid()
+  await store.saveVehicle(props.plan.id, { id: vid, name: '新车', plate: '', power: 'gas' })
+  vehicleSel.value = vid
+}
+
+async function deleteSelectedVehicle() {
+  if (!vehicle.value) return
+  if (!confirm(`删除车辆「${vehicle.value.name || '新车'}」?其加油记录会保留但不再归属任何车。`)) return
+  await store.removeVehicle(props.plan.id, vehicle.value.id)
 }
 
 /* ---------- 统计 ---------- */
@@ -189,51 +230,76 @@ async function saveFuel() {
 
 <template>
   <section class="space-y-5">
-    <!-- 车辆信息 -->
-    <div class="card p-6">
-      <div class="flex flex-wrap items-center justify-between gap-4">
-        <div class="flex items-center gap-4">
+    <!-- 车辆信息(支持多车) -->
+    <div class="card p-5 sm:p-6">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div class="flex items-center gap-3">
           <span class="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
             <i class="fa-solid fa-car-side text-[20px]" aria-hidden="true"></i>
           </span>
-          <div>
-            <p class="title-2">{{ vehicle?.name || '给这趟车起个名字?' }}</p>
-            <p class="muted text-[12px]">
-              {{ vehicle?.plate || '未填车牌号' }}
-              <span v-if="stats.lastOdo"> · 表显 {{ Math.round(stats.lastOdo) }} km</span>
+          <div class="min-w-0">
+            <select v-if="vehicles.length > 1" v-model="vehicleSel" class="field !w-56 !py-1.5 !text-[13px] font-semibold">
+              <option v-for="v in vehicles" :key="v.id" :value="v.id">
+                {{ v.name || '新车' }} · {{ v.power === 'ev' ? '纯电' : v.power === 'hybrid' ? '混动' : '燃油' }}
+                <template v-if="v.plate"> · {{ v.plate }}</template>
+              </option>
+            </select>
+            <p v-else class="title-2">{{ vehicle?.name || '给这趟车起个名字?' }}</p>
+            <p class="muted mt-0.5 text-[12px]">
+              共 {{ vehicles.length }} 辆车
+              <template v-if="vehicle?.plate"> · {{ vehicle.plate }}</template>
+              <template v-if="stats.lastOdo"> · 表显 {{ Math.round(stats.lastOdo) }} km</template>
             </p>
           </div>
         </div>
         <div v-if="canEdit" class="flex flex-wrap items-center gap-2">
-          <input v-model="vehForm.name" class="field !w-40 !py-1.5 !text-[13px]" placeholder="爱车昵称" @focus="editVehicle" />
-          <input v-model="vehForm.plate" class="field !w-32 !py-1.5 !text-[13px]" placeholder="车牌号" @focus="editVehicle" />
-          <input
-            v-model="vehForm.capacity"
-            type="number"
-            min="0"
-            class="field !w-24 !py-1.5 !text-[13px]"
-            placeholder="油箱L"
-            title="油箱容积(用于续航建议)"
-            @focus="editVehicle"
-          />
-          <input
-            v-model="vehForm.cons"
-            type="number"
-            min="0"
-            step="0.1"
-            class="field !w-24 !py-1.5 !text-[13px]"
-            placeholder="油耗L/100km"
-            title="百公里油耗(留空则按记录自动测算)"
-            @focus="editVehicle"
-          />
-          <BaseButton size="sm" icon="fa-check" @click="saveVehicle">保存</BaseButton>
+          <BaseButton variant="soft" size="sm" icon="fa-plus" @click="addNewVehicle">新增车辆</BaseButton>
+          <BaseButton
+            v-if="vehicles.length > 1 && vehicle"
+            variant="danger-soft"
+            size="sm"
+            icon="fa-trash-can"
+            @click="deleteSelectedVehicle"
+          >删除</BaseButton>
         </div>
-        <p v-else class="muted text-[12px]">
-          {{ vehicle?.plate || '未填车牌号' }}
-          <template v-if="vehicle?.capacity_l"> · 油箱 {{ vehicle.capacity_l }} L</template>
-          <template v-if="vehicle?.cons_l100"> · {{ vehicle.cons_l100 }} L/100km</template>
-        </p>
       </div>
+
+      <!-- 能源类型与参数(编辑当前车辆) -->
+      <div v-if="canEdit && vehicle" class="mt-4 space-y-3 border-t border-line/70 pt-4">
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="muted text-[12px]">能源类型:</span>
+          <button
+            v-for="p in [{ key: 'gas', label: '燃油' }, { key: 'hybrid', label: '混动' }, { key: 'ev', label: '纯电' }]"
+            :key="p.key"
+            type="button"
+            class="chip cursor-pointer transition-all duration-150 active:scale-95"
+            :class="vehForm.power === p.key ? 'chip-brand' : 'chip-plain'"
+            @click="vehForm.power = p.key"
+          >{{ p.label }}</button>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <input v-model="vehForm.name" class="field !w-40 !py-1.5 !text-[13px]" placeholder="爱车昵称" />
+          <input v-model="vehForm.plate" class="field !w-32 !py-1.5 !text-[13px]" placeholder="车牌号" />
+          <template v-if="vehForm.power !== 'ev'">
+            <input v-model="vehForm.capacity" type="number" min="0" class="field !w-24 !py-1.5 !text-[13px]" placeholder="油箱L" title="油箱容积(续航建议用)" />
+            <input v-model="vehForm.cons" type="number" min="0" step="0.1" class="field !w-24 !py-1.5 !text-[13px]" placeholder="油耗L/100km" />
+          </template>
+          <template v-else>
+            <input v-model="vehForm.battery" type="number" min="0" class="field !w-24 !py-1.5 !text-[13px]" placeholder="电池kWh" />
+            <input v-model="vehForm.kwh100" type="number" min="0" step="0.1" class="field !w-24 !py-1.5 !text-[13px]" placeholder="电耗kWh/100km" />
+          </template>
+          <BaseButton size="sm" icon="fa-check" @click="saveVehicleInfo">保存</BaseButton>
+        </div>
+      </div>
+      <p v-else-if="!canEdit" class="muted mt-2 text-[12px]">
+        <template v-if="vehicle">
+          {{ vehicle?.plate || '未填车牌号' }}
+          · {{ vehicle?.power === 'ev' ? '纯电' : vehicle?.power === 'hybrid' ? '混动' : '燃油' }}
+          <template v-if="vehicle?.capacity_l"> · 油箱 {{ vehicle.capacity_l }} L</template>
+          <template v-if="vehicle?.battery_kwh"> · 电池 {{ vehicle.battery_kwh }} kWh</template>
+        </template>
+        <template v-else>等待创建者添加车辆</template>
+      </p>
     </div>
 
     <!-- 统计 -->

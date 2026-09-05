@@ -186,6 +186,29 @@ export const usePlansStore = defineStore('plans', () => {
         console.warn('[plans] 更新失败', error.message)
         throw error
       }
+      // 计划级变更留痕:记录具体改动字段
+      try {
+        const me = auth.user
+        const parts = []
+        for (const k of Object.keys(payload)) {
+          const lab = {
+            name: '名称', destination: '目的地', start_city: '集合城市', start_date: '出发日期',
+            end_date: '返程日期', budget: '预算', gradient: '配色'
+          }[k] || k
+          const o = before?.[k]
+          const n = payload[k]
+          const s = (v) => (v === undefined || v === null || v === '' ? '空' : k === 'budget' ? `¥${Number(v)}` : String(v))
+          parts.push(o !== undefined && o !== n ? `${lab} ${s(o)} → ${s(n)}` : `${lab}设为${s(n)}`)
+        }
+        await supabase.from('plan_logs').insert({
+          id: makeUuid(),
+          plan_id: id,
+          actor: me ? { id: me.id, name: me.name } : null,
+          action: `更新了计划:${parts.join(',')}`
+        })
+      } catch {
+        /* 忽略日志错误 */
+      }
     }
   }
 

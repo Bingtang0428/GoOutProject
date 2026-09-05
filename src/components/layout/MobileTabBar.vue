@@ -1,4 +1,4 @@
-<script setup>
+﻿<script setup>
 // 移动端(<768px)底部固定 Tab 栏:7 个功能模块(触控友好版)
 defineProps({
   active: { type: String, default: 'route' }
@@ -11,7 +11,7 @@ const TABS = [
   { key: 'todo', icon: 'fa-list-check', label: '待办' },
   { key: 'guide', icon: 'fa-bookmark', label: '攻略' },
   { key: 'reminder', icon: 'fa-bell', label: '提醒' },
-  { key: 'bill', icon: 'fa-scale-balanced', label: '分账' },
+  { key: 'bill', icon: 'fa-scale-balanced', label: '分账&车辆' },
   { key: 'transit', icon: 'fa-plane-departure', label: '交通' }
 ]
 

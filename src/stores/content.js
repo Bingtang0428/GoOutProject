@@ -133,14 +133,47 @@ export const useContentStore = defineStore('content', () => {
     }
     // 乐观更新,失败时回滚并告警
     const before = { ...row }
+    const detail = diffDetail(key, before, patch)
     Object.assign(row, patch)
     const { error } = await supabase.from(table).update(patch).eq('id', id)
     if (error) {
       Object.assign(row, before)
       console.warn(`[content] 更新 ${table} 失败:`, error.message)
     } else {
-      await maybeLog(planId, key, '更新', labelOf(key, row))
+      await maybeLog(planId, key, '更新', labelOf(key, row), detail)
     }
+  }
+
+  /** 生成「字段:旧 → 新」的人类可读差异 */
+  function diffDetail(key, oldRow, patch) {
+    const LABELS = {
+      title: '标题', name: '名称', task: '任务', done: '完成状态', due: '截止日期', day: '归属日',
+      assignee: '负责人', amount: '金额', category: '分类', booked: '预订状态', tags: '标签',
+      phone: '电话', address: '地址', type: '类型', read: '已读', status: '状态', plan_b: 'Plan B',
+      date: '日期', time: '时间', mode: '方式', from_city: '出发地', to_city: '到达地',
+      ref_no: '班次/航班', note: '备注', liters: '加油量', odometer: '里程', kind: '类型',
+      paid_by: '付款人', involves: '分摊人', link: '关联', image: '图片', driver: '司机', filename: '文件'
+    }
+    const parts = []
+    for (const k of Object.keys(patch || {})) {
+      const oldV = oldRow?.[k]
+      const newV = patch[k]
+      const fmt = (v) => {
+        if (v === null || v === undefined || v === '') return '空'
+        if (k === 'assignee' || k === 'driver' || k === 'paid_by') return v.name || JSON.stringify(v)
+        if (k === 'amount' || k === 'budget') return `¥${Number(v)}`
+        if (k === 'done' || k === 'read' || k === 'booked') return v ? '是' : '否'
+        if (Array.isArray(v)) return v.length ? v.join('、') : '空'
+        if (k === 'status') return { open: '待采纳', accepted: '已采纳', done: '已闭环' }[v] || v
+        if (k === 'day') return v ? `第${v}天` : '未定'
+        return typeof v === 'object' ? JSON.stringify(v) : String(v)
+      }
+      const label = LABELS[k] || k
+      const oldS = oldV !== undefined ? fmt(oldV) : null
+      const newS = fmt(newV)
+      parts.push(oldS === null ? `${label}设为${newS}` : `${label} ${oldS} → ${newS}`)
+    }
+    return parts.join(',')
   }
 
   // ------------------------------------------------------------
@@ -182,13 +215,17 @@ export const useContentStore = defineStore('content', () => {
   // 行程变更日志(轻量留痕,尽力而为;失败不影响主流程)
   // 路线日(days)的结构化内容(坐标/标题/地点)会高频变更,不写日志
   // ------------------------------------------------------------
-  async function maybeLog(planId, key, verb, label) {
+  async function maybeLog(planId, key, verb, label, detail = '') {
     if (!isSupabase || key === 'days' || !planId || !label) return
     try {
       const auth = useAuthStore()
       const actor = auth.user ? { id: auth.user.id, name: auth.user.name } : null
       const text =
-        verb === '删除' ? `删除了「${label}」` : verb === '更新' ? `更新了「${label}」` : `新增了「${label}」`
+        verb === '删除'
+          ? `删除了「${label}」` + (detail ? `(${detail})` : '')
+          : verb === '更新'
+            ? `更新了「${label}」` + (detail ? `:${detail}` : '')
+            : `新增了「${label}」`
       await supabase.from('plan_logs').insert({ id: makeUuid(), plan_id: planId, actor, action: text })
     } catch {
       /* 日志失败不影响业务 */
@@ -658,22 +695,30 @@ export const useContentStore = defineStore('content', () => {
   }
 
   // ------------------------------------------------------------
-  // 车辆 & 里程(fuel)
+  // 车辆 & 里程(fuel) —— 支持多辆车,车辆可区分 燃油/混动/纯电
   // ------------------------------------------------------------
   function currentVehicle(planId) {
     return rows[planId]?.vehicle?.[0] || null
   }
 
-  /** 保存车辆信息(每计划一行) */
-  async function saveVehicle(planId, data) {
-    const cur = currentVehicle(planId)
-    if (cur) {
-      await remoteUpdate(planId, 'vehicles', 'vehicle', cur.id, data)
-    } else {
-      await remoteWrite(planId, 'vehicles', 'vehicle', {
-        id: uid('veh'), plan_id: planId, ...data, created_at: new Date().toISOString()
-      })
+  /** 保存车辆(row.id 存在=更新,否则新增);每计划可有多辆 */
+  async function saveVehicle(planId, row) {
+    const list = rows[planId]?.vehicle || []
+    if (row?.id && list.some((v) => v.id === row.id)) {
+      await remoteUpdate(planId, 'vehicles', 'vehicle', row.id, row)
+      return row
     }
+    await remoteWrite(planId, 'vehicles', 'vehicle', {
+      id: makeUuid(), plan_id: planId, name: '', plate: '',
+      power: 'gas', capacity_l: null, cons_l100: null, battery_kwh: null, kwh_100: null,
+      ...row, created_at: new Date().toISOString()
+    })
+    return row
+  }
+
+  /** 删除车辆(其加油记录保留,仅展示归属) */
+  function removeVehicle(planId, id) {
+    return remoteDelete(planId, 'vehicles', 'vehicle', id)
   }
 
   function addFuel(planId, payload) {
@@ -763,6 +808,7 @@ export const useContentStore = defineStore('content', () => {
     updateTransit,
     removeTransit,
     saveVehicle,
+    removeVehicle,
     currentVehicle,
     addFuel,
     updateFuel,
