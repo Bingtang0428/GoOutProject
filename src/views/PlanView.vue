@@ -32,6 +32,7 @@ import { supabase, isSupabase } from '@/api/supabase'
 import TransitsSection from '@/components/sections/TransitsSection.vue'
 import PlanPermModal from '@/components/plan/PlanPermModal.vue'
 import ExportSheet from '@/components/plan/ExportSheet.vue'
+import ReportSheet from '@/components/plan/ReportSheet.vue'
 
 const plansStore = usePlansStore()
 const contentStore = useContentStore()
@@ -126,6 +127,7 @@ const showDelete = ref(false)
 const showPerm = ref(false)
 const showExport = ref(false)
 const showLogs = ref(false)
+const showReport = ref(false)
 const planLogs = ref([])
 
 async function loadPlanLogs() {
@@ -278,6 +280,9 @@ onBeforeUnmount(() => {
               <button v-if="isSupabase" class="btn btn-ghost btn-sm" style="background: rgba(255,255,255,0.6)" @click="openLogs">
                 <i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i>最近动态
               </button>
+              <button class="btn btn-ghost btn-sm" style="background: rgba(255,255,255,0.6)" @click="showReport = true">
+                <i class="fa-solid fa-chart-pie" aria-hidden="true"></i>复盘
+              </button>
               <button class="btn btn-ghost btn-sm" style="background: rgba(255,255,255,0.6)" @click="showExport = true">
                 <i class="fa-solid fa-file-export" aria-hidden="true"></i>导出行程单
               </button>
@@ -366,6 +371,7 @@ onBeforeUnmount(() => {
     <PlanFormModal v-model="showForm" :plan="plan" @save="onSave" />
     <PlanPermModal v-if="isOwner" v-model="showPerm" :plan="plan" />
     <ExportSheet v-model="showExport" :plan="plan" />
+    <ReportSheet v-model="showReport" :plan="plan" />
 
     <!-- 最近动态 -->
     <BaseModal v-model="showLogs" title="最近动态" :max-width="'480px'">
