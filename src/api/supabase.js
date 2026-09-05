@@ -10,6 +10,9 @@ const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 
 export const isSupabase = Boolean(url && anonKey)
 
+/** 前端版本指纹(用于线上排障:徽章会直接显示该值) */
+export const APP_VERSION = '2026.09.07-3'
+
 export const supabase = isSupabase ? createClient(url, anonKey) : null
 
 export function storageUrl(path) {

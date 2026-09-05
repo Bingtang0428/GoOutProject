@@ -10,6 +10,7 @@ import { ref, watch, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useHead } from '@vueuse/head'
 import { useAuthStore } from '@/stores/auth'
+import { isSupabase, APP_VERSION } from '@/api/supabase'
 import BaseButton from '@/components/ui/BaseButton.vue'
 
 useHead({ title: '登录 · 兔兔同行自驾旅行企划' })
@@ -145,6 +146,13 @@ function routeTo(me) {
 
       <!-- 右侧 -->
       <div class="bg-surface p-5 sm:p-8">
+        <div class="mb-3 flex items-center justify-between gap-2">
+          <span class="muted text-[10.5px]">v{{ APP_VERSION }}</span>
+          <span class="chip !px-2 !py-0.5 !text-[10.5px]" :class="isSupabase ? 'chip-success' : 'chip-amber'">
+            <span class="dot"></span>{{ isSupabase ? '云端模式' : '本地演示模式' }}
+          </span>
+        </div>
+
         <div class="mb-5 flex items-center gap-3 md:hidden">
           <span class="flex h-10 w-10 items-center justify-center rounded-xl bg-primary text-white">
             <i class="fa-solid fa-map-location-dot text-[16px]" aria-hidden="true"></i>
