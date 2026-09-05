@@ -47,9 +47,89 @@ async function loadCodes() {
   if (!error) codes.value = data || []
 }
 
+/* ---------- 成员账号管理(增删改) ---------- */
+const accounts = ref([])
+const showAcc = ref(false)
+const accForm = ref({ id: null, name: '', role: 'member', disabled: false })
+
+const ROLE_OPTIONS = [
+  { key: 'admin', text: '管理员' },
+  { key: 'member', text: '参与者' },
+  { key: 'viewer', text: '围观者' }
+]
+
+async function loadAccounts() {
+  if (!isSupabase) return
+  const { data, error } = await supabase
+    .from('accounts')
+    .select('id, name, role, disabled, created_at')
+    .order('created_at', { ascending: false })
+    .limit(300)
+  if (!error) accounts.value = data || []
+}
+
+function openAccEdit(a = null) {
+  accForm.value = a
+    ? { id: a.id, name: a.name, role: a.role, disabled: a.disabled }
+    : { id: null, name: '', role: 'member', disabled: false }
+  showAcc.value = true
+}
+
+async function saveAccount() {
+  const name = accForm.value.name.trim()
+  if (!name) return
+  msg.value = ''
+  try {
+    if (accForm.value.id) {
+      const { error } = await supabase
+        .from('accounts')
+        .update({ name, role: accForm.value.role, disabled: accForm.value.disabled })
+        .eq('id', accForm.value.id)
+      if (error) throw error
+    } else {
+      msg.value = '新增账号请让用户在登录页「注册」;这里是修改已有成员档案。'
+      return
+    }
+    showAcc.value = false
+    await loadAccounts()
+  } catch (e) {
+    msg.value = /unique|duplicate/i.test(e?.message || '') ? '该昵称已被占用' : (e?.message || '保存失败')
+  }
+}
+
+async function resetPwd(id) {
+  const pwd = window.prompt('为该成员设置新密码(至少 4 位):')
+  if (!pwd) return
+  if (pwd.length < 4) {
+    alert('密码至少 4 位')
+    return
+  }
+  msg.value = ''
+  const { error } = await supabase.rpc('admin_set_password', { p_id: id, p_password: pwd })
+  if (error) msg.value = error.message
+  else alert('密码已重置')
+}
+
+async function deleteAccount(a) {
+  if (!confirm(`删除成员「${a.name}」?该成员会从所有计划中被移出。`)) return
+  msg.value = ''
+  const { data, error } = await supabase.rpc('admin_delete_account', { p_id: a.id })
+  if (error) {
+    msg.value = error.message
+    return
+  }
+  if (data && data.ok === false) {
+    msg.value = data.reason === 'owner_plans' ? `「${a.name}」仍是某些计划的创建者,请先在计划管理中删除或移交其计划` : '删除失败'
+    return
+  }
+  await loadAccounts()
+  await plansStore.init()
+}
+
 onMounted(async () => {
   await plansStore.init()
   await loadCodes()
+  await loadAccounts()
 })
 
 /* ---------- 生成邀请码 ---------- */
@@ -240,6 +320,39 @@ async function deletePlan(plan) {
           </p>
         </section>
 
+        <!-- 成员账号(增删改) -->
+        <section v-if="isSupabase" class="card mb-6 p-5 sm:p-6">
+          <h2 class="title-2 mb-4 flex items-center gap-2">
+            <i class="fa-solid fa-address-book text-primary" aria-hidden="true"></i>成员账号
+            <span class="muted text-[12.5px] font-normal">{{ accounts.length }} 个 · 新成员在登录页用邀请码注册,这里负责档案管理</span>
+          </h2>
+          <div class="space-y-2">
+            <div
+              v-for="a in accounts"
+              :key="a.id"
+              class="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-[12px] bg-surface-2/60 px-4 py-3"
+              :class="a.disabled ? 'opacity-60' : ''"
+            >
+              <Avatar :name="a.name" :size="28" />
+              <span class="text-[14px] font-semibold text-ink">{{ a.name }}</span>
+              <span class="chip" :class="ROLE_TAG[a.role]?.cls || 'chip-plain'">{{ ROLE_TAG[a.role]?.text }}</span>
+              <span v-if="a.disabled" class="chip chip-rose">已停用</span>
+              <span class="muted ml-auto text-[12px]">
+                {{ String(new Date(a.created_at).getFullYear()) }}-{{ String(new Date(a.created_at).getMonth() + 1).padStart(2, '0') }}-{{ String(new Date(a.created_at).getDate()).padStart(2, '0') }} 注册
+              </span>
+              <div class="flex gap-1">
+                <button class="btn btn-ghost btn-sm" @click="openAccEdit(a)">
+                  <i class="fa-solid fa-pen" aria-hidden="true"></i>编辑
+                </button>
+                <button class="btn btn-danger-soft btn-sm" @click="deleteAccount(a)">
+                  <i class="fa-solid fa-user-slash" aria-hidden="true"></i>删除
+                </button>
+              </div>
+            </div>
+          </div>
+          <p v-if="!accounts.length" class="muted py-4 text-center text-[13px]">暂无成员;队员用邀请码注册后档案会出现在这里</p>
+        </section>
+
         <!-- 计划与人员 -->
         <section class="space-y-3">
           <h2 class="title-2 mb-1 flex items-center gap-2">
@@ -362,6 +475,42 @@ async function deletePlan(plan) {
       <template #footer>
         <BaseButton variant="ghost" @click="showGen = false">取消</BaseButton>
         <BaseButton icon="fa-key" :loading="genBusy" :disabled="!genCode.trim()" @click="createCode">生成并复制</BaseButton>
+      </template>
+    </BaseModal>
+
+    <!-- 编辑成员档案 -->
+    <BaseModal v-model="showAcc" title="编辑成员" :max-width="'460px'">
+      <div class="space-y-4">
+        <div>
+          <label class="flabel">昵称(登录名)</label>
+          <input v-model="accForm.name" class="field" maxlength="12" placeholder="成员的登录昵称" />
+        </div>
+        <div>
+          <label class="flabel">角色</label>
+          <div class="flex gap-2">
+            <button
+              v-for="r in ROLE_OPTIONS"
+              :key="r.key"
+              type="button"
+              class="chip flex-1 cursor-pointer !px-3 !py-2.5 text-center"
+              :class="accForm.role === r.key ? 'chip-brand' : 'chip-plain'"
+              @click="accForm.role = r.key"
+            >{{ r.text }}</button>
+          </div>
+        </div>
+        <label class="flex cursor-pointer items-center justify-between gap-4 rounded-[12px] bg-surface-2/70 px-4 py-3">
+          <span class="text-[13.5px] font-semibold text-ink-soft">
+            <i class="fa-solid fa-ban text-rose mr-1.5" aria-hidden="true"></i>停用该账号(无法登录)
+          </span>
+          <input v-model="accForm.disabled" type="checkbox" class="h-4 w-4 accent-[#b75973]" />
+        </label>
+      </div>
+      <template #footer>
+        <BaseButton variant="ghost" @click="resetPwd(accForm.id)">
+          <i class="fa-solid fa-key" aria-hidden="true"></i>重置密码
+        </BaseButton>
+        <BaseButton variant="ghost" @click="showAcc = false">取消</BaseButton>
+        <BaseButton :disabled="!accForm.name.trim()" @click="saveAccount">保存</BaseButton>
       </template>
     </BaseModal>
   </div>

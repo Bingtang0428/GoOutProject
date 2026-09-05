@@ -11,7 +11,7 @@ defineProps({
     <span
       class="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 text-2xl text-primary"
     >
-      <i :class="`fa-regular ${icon}`" aria-hidden="true"></i>
+      <i :class="`fa-solid ${icon}`" aria-hidden="true"></i>
     </span>
     <div>
       <p class="title-2 mb-1">{{ title }}</p>

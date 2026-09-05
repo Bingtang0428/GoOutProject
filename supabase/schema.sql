@@ -113,7 +113,101 @@ create table if not exists public.invite_codes (
   revoked     boolean not null default false
 );
 
--- 初始管理员码(请登录后台后尽快在「邀请码管理」里撤销并重新生成)
+-- 账号(注册时由邀请码验证建立;之后用昵称+密码登录,不再需要邀请码)
+create extension if not exists pgcrypto;
+
+create table if not exists public.accounts (
+  id            uuid primary key default gen_random_uuid(),
+  name          text not null unique,          -- 登录昵称
+  password_hash text not null,                 -- crypt 哈希
+  role          text not null default 'member' check (role in ('admin','member','viewer')),
+  disabled      boolean not null default false,
+  created_at    timestamptz not null default now()
+);
+
+-- ★ 注册:昵称 + 密码 + 邀请码(原子:校验码→扣次数→建账号→自动加入计划名单)
+create or replace function public.register_account(p_name text, p_password text, p_code text)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  rec     public.invite_codes%rowtype;
+  new_id  uuid;
+begin
+  if exists (select 1 from public.accounts where name = p_name) then
+    return jsonb_build_object('ok', false, 'reason', 'name_taken');
+  end if;
+  select * into rec from public.invite_codes where code = upper(trim(p_code)) limit 1 for update;
+  if not found then return jsonb_build_object('ok', false, 'reason', 'invite_not_found'); end if;
+  if rec.revoked then return jsonb_build_object('ok', false, 'reason', 'invite_revoked'); end if;
+  if rec.use_count >= rec.max_uses then return jsonb_build_object('ok', false, 'reason', 'invite_exhausted'); end if;
+
+  insert into public.accounts (name, password_hash, role)
+  values (p_name, crypt(p_password, gen_salt('bf', 10)), rec.role)
+  returning id into new_id;
+
+  update public.invite_codes
+     set use_count = use_count + 1, used_at = now(), used_by = jsonb_build_object('id', new_id, 'name', p_name)
+   where id = rec.id;
+
+  -- 绑定计划:自动加入 参与者/围观者 名单
+  if rec.role = 'member' and rec.plan_id is not null then
+    update public.plans
+       set members = members || jsonb_build_array(jsonb_build_object('id', new_id, 'name', p_name))
+     where id = rec.plan_id
+       and not members @> jsonb_build_array(jsonb_build_object('id', new_id));
+  elsif rec.role = 'viewer' and rec.plan_id is not null then
+    update public.plans
+       set viewers = viewers || jsonb_build_array(jsonb_build_object('id', new_id, 'name', p_name))
+     where id = rec.plan_id
+       and not viewers @> jsonb_build_array(jsonb_build_object('id', new_id));
+  end if;
+
+  return jsonb_build_object('ok', true, 'id', new_id, 'name', p_name, 'role', rec.role, 'plan_id', rec.plan_id);
+end; $$;
+
+-- ★ 登录:昵称 + 密码(无邀请码)
+create or replace function public.login_account(p_name text, p_password text)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare rec public.accounts%rowtype;
+begin
+  select * into rec from public.accounts where name = p_name limit 1;
+  if not found then return jsonb_build_object('ok', false, 'reason', 'account_not_found'); end if;
+  if rec.disabled then return jsonb_build_object('ok', false, 'reason', 'account_disabled'); end if;
+  if rec.password_hash <> crypt(p_password, rec.password_hash) then
+    return jsonb_build_object('ok', false, 'reason', 'wrong_password');
+  end if;
+  return jsonb_build_object('ok', true, 'id', rec.id, 'name', rec.name, 'role', rec.role);
+end; $$;
+
+-- ★ 后台:管理员重置成员密码
+create or replace function public.admin_set_password(p_id uuid, p_password text)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  update public.accounts set password_hash = crypt(p_password, gen_salt('bf', 10)) where id = p_id;
+end; $$;
+
+-- ★ 后台:删除成员(从所有计划名单中移出;仍为计划创建者则拒绝)
+create or replace function public.admin_delete_account(p_id uuid)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare p plans%rowtype;
+begin
+  if exists (select 1 from public.plans where owner_id = p_id::text) then
+    return jsonb_build_object('ok', false, 'reason', 'owner_plans');
+  end if;
+  for p in select * from public.plans loop
+    update public.plans
+       set members = coalesce((select jsonb_agg(e) from jsonb_array_elements(p.members) e where e->>'id' <> p_id::text), '[]'::jsonb),
+           viewers = coalesce((select jsonb_agg(e) from jsonb_array_elements(p.viewers) e where e->>'id' <> p_id::text), '[]'::jsonb)
+     where id = p.id;
+  end loop;
+  delete from public.accounts where id = p_id;
+  return jsonb_build_object('ok', true);
+end; $$;
+
+alter table public.accounts enable row level security;
+drop policy if exists "accounts_all" on public.accounts;
+create policy "accounts_all" on public.accounts for all using (true) with check (true);
+
+
 insert into public.invite_codes (code, role, label, max_uses)
 select 'TT-ADMIN-2026', 'admin', '内置管理员(首次登录后请撤销)', 3
 where not exists (select 1 from public.invite_codes where role = 'admin');

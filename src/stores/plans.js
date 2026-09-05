@@ -118,7 +118,12 @@ export const usePlansStore = defineStore('plans', () => {
   const isManager = (plan) => myRole(plan) === 'owner'
   const canEditContent = (plan) => {
     const r = myRole(plan)
-    return r === 'owner' || r === 'member'
+    if (r === 'owner' || r === 'member') return true
+    // 管理员可协助维护任何计划的内容;已注册的参与者若尚未被加入名单,
+    // 也可编辑(名单同步由数据库注册函数自动完成)
+    if (auth.user?.role === 'admin') return true
+    if (auth.user?.role === 'member') return true
+    return false
   }
 
   // ------------------------------------------------------------

@@ -1,9 +1,11 @@
 // ============================================================
-// 用户状态
-// 登录方式:
-//  - Supabase 模式 → 「昵称 + 一次性邀请码」(由管理员在后台生成)
-//  - 演示模式     → 昵称直达(纯本地)
-// 产物: { id, name, role?: 'admin'|'member'|'viewer', email? }
+// 账号体系
+//  - Supabase 模式:
+//      注册(首次)= 昵称 + 密码 + 邀请码(验证码),由数据库函数
+//        register_account 原子完成:校验邀请码→扣次数→建账号→
+//        自动加入邀请码绑定的计划名单。
+//      登录(之后)= 昵称 + 密码,不再需要邀请码。
+//  - 演示模式:昵称直达(纯本地)
 // ============================================================
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
@@ -38,45 +40,63 @@ export const useAuthStore = defineStore('auth', () => {
     const u = {
       id: 'u-' + Math.random().toString(36).slice(2, 8),
       name: name || '旅行伙伴',
-      email: '',
       role: 'member'
     }
     persist(u)
     return u
   }
 
-  /**
-   * ★ 邀请码登录(Supabase 模式)
-   * 通过数据库函数 claim_invite 原子占用(支持使用次数 1-100)
-   */
-  async function loginWithInviteCode(nickname, code) {
-    if (!isSupabase) {
-      // 演示模式:任何昵称直达(码仅作占位体验)
-      return { ...loginLocal(nickname), role: 'member' }
-    }
+  /** ★ 注册:昵称 + 密码 + 邀请码(数据库端原子处理) */
+  async function registerWithCode(nickname, password, code) {
+    if (!isSupabase) return { ...loginLocal(nickname), role: 'member' }
+    const name = (nickname || '').trim()
+    const pwd = password || ''
     const raw = String(code || '').trim().toUpperCase()
+    if (!name) throw new Error('请输入昵称')
+    if (pwd.length < 4) throw new Error('密码至少 4 位')
     if (!raw) throw new Error('请输入邀请码')
-    const name = (nickname || '').trim() || '旅行伙伴'
-    const me = { id: makeUuid(), name }
 
-    const { data, error } = await supabase.rpc('claim_invite', { p_code: raw, p_user: me })
-    if (error) throw new Error('校验邀请码失败,请稍后重试')
+    const { data, error } = await supabase.rpc('register_account', {
+      p_name: name,
+      p_password: pwd,
+      p_code: raw
+    })
+    if (error) throw new Error('注册服务暂不可用,请稍后重试')
     if (!data?.ok) {
       const reason = {
+        name_taken: '该昵称已被注册,换一个或直接登录',
         invite_not_found: '邀请码不存在,请联系管理员',
         invite_revoked: '该邀请码已被撤销',
-        invite_exhausted: '该邀请码使用次数已用完'
-      }[data?.reason] || '邀请码不可用'
+        invite_exhausted: '该邀请码次数已用完'
+      }[data?.reason] || '注册失败'
       throw new Error(reason)
     }
+    const u = { id: data.id, name: data.name || name, role: data.role, invite_plan_id: data.plan_id || null }
+    persist(u)
+    return u
+  }
 
-    const u = {
-      ...me,
-      role: data.role,
-      invite_id: data.id || null,
-      invite_plan_id: data.plan_id || null,
-      invite_remaining: data.remaining ?? 0
+  /** ★ 登录:昵称 + 密码(不需要邀请码) */
+  async function loginWithPassword(nickname, password) {
+    if (!isSupabase) return { ...loginLocal(nickname), role: 'member' }
+    const name = (nickname || '').trim()
+    if (!name) throw new Error('请输入昵称')
+    if (!password) throw new Error('请输入密码')
+
+    const { data, error } = await supabase.rpc('login_account', {
+      p_name: name,
+      p_password: password
+    })
+    if (error) throw new Error('登录服务暂不可用,请稍后重试')
+    if (!data?.ok) {
+      const reason = {
+        account_not_found: '账号不存在,请先用邀请码注册',
+        wrong_password: '昵称或密码不正确',
+        account_disabled: '该账号已被管理员停用,请联系管理员'
+      }[data?.reason] || '登录失败'
+      throw new Error(reason)
     }
+    const u = { id: data.id, name: data.name || name, role: data.role }
     persist(u)
     return u
   }
@@ -87,5 +107,5 @@ export const useAuthStore = defineStore('auth', () => {
     if (supabase) supabase.auth.signOut().catch(() => {})
   }
 
-  return { user, isLoggedIn, isAdmin, loginLocal, loginWithInviteCode, logout }
+  return { user, isLoggedIn, isAdmin, loginLocal, registerWithCode, loginWithPassword, logout }
 })
