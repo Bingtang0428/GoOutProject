@@ -276,12 +276,52 @@ function visItems() {
     .filter(Boolean)
 }
 
-/** 按顺序把 单天/跨天 自驾路段画到地图上 */
+/* ---------------- 路书:Day 切换 + 总里程/总时长 ---------------- */
+const mapDay = ref(0) // 0=整体行程,N=第 N 天
+const mapDaySwitcher = ref(false)
+
+/** 按天统计里程与时长;dayNum=0 表示整体 */
+function legStats(dayNum) {
+  let realKm = 0
+  let estMinutes = 0
+  let hasKm = false
+  for (const { di, day, dest } of flattenDests()) {
+    if (dayNum > 0 && di + 1 !== dayNum) continue
+    const km = Number(dest.distance_km)
+    if (Number.isFinite(km) && km > 0) {
+      realKm += km
+      hasKm = true
+    } else {
+      estMinutes += Number(dest.drive_min) || 0
+    }
+  }
+  const estKm = (estMinutes / 60) * 65
+  return {
+    realKm: hasKm ? Math.round(realKm) : null,
+    estKm: Math.round(estKm),
+    minutes: Math.round(realKm ? realKm / (65 / 60) + estMinutes : estMinutes)
+  }
+}
+
+const mapTotals = computed(() => legStats(mapDay.value))
+
+function setMapDay(n) {
+  mapDay.value = n
+  if (map) drawSegments()
+}
+
+function fmtHours(min) {
+  if (!min) return '0 分钟'
+  const h = Math.floor(min / 60)
+  return h ? `${h} 小时 ${min % 60} 分` : `${min} 分钟`
+}
+
+/** 按顺序把 单天/跨天 自驾路段画到地图上(遵循 mapDay 过滤) */
 async function drawSegments() {
   if (!map || !routeLayer) return
   const L = await getL()
   routeLayer.clearLayers()
-  const items = visItems()
+  const items = visItems().filter((it) => mapDay.value === 0 || it.di + 1 === mapDay.value)
   items.forEach((it) => addMarker(L, it))
   const pts = items.map((it) => [it.dest.lat, it.dest.lng])
   for (let i = 1; i < items.length; i++) {
@@ -354,6 +394,7 @@ watch(
     extras.clear()
     legNote.value = ''
     autoRun.value = false
+    mapDay.value = 0
     view.value = 'list'
   }
 )
@@ -610,8 +651,31 @@ watch(
     <!-- ============ 地图视图 ============ -->
     <div v-if="view === 'map'" class="fade-up">
       <div class="card relative overflow-hidden !rounded-card">
+        <!-- 路书切换:整体 / 按天 -->
+        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-line/70 px-4 py-3">
+          <div class="no-scrollbar -mx-1 flex items-center gap-2 overflow-x-auto px-1">
+            <button
+              class="chip shrink-0 cursor-pointer whitespace-nowrap transition-all duration-150 active:scale-95"
+              :class="mapDay === 0 ? 'chip-brand' : 'chip-plain'"
+              @click="setMapDay(0)"
+            >整体行程</button>
+            <button
+              v-for="d in days"
+              :key="d.id || d.date"
+              class="chip shrink-0 cursor-pointer whitespace-nowrap transition-all duration-150 active:scale-95"
+              :class="mapDay === dayIndex(plan.start_date, d.date) ? 'chip-brand' : 'chip-plain'"
+              @click="setMapDay(dayIndex(plan.start_date, d.date))"
+            >Day {{ dayIndex(plan.start_date, d.date) }}</button>
+          </div>
+          <span class="chip chip-plain !text-[11px]">
+            <i class="fa-solid fa-route mr-1 text-primary/70" aria-hidden="true"></i>
+            {{ mapTotals.realKm !== null ? mapTotals.realKm + ' km' : `约 ${mapTotals.estKm} km` }}
+            <template v-if="mapTotals.realKm !== null && mapTotals.minutes"> · </template>
+            <template v-if="mapTotals.minutes"><i class="fa-regular fa-clock mr-1 text-amber" aria-hidden="true"></i>{{ fmtHours(mapTotals.minutes) }}</template>
+          </span>
+        </div>
         <!-- 高度自适应:小屏按视口比例,避免半屏被地图占掉 -->
-        <div ref="mapEl" class="h-[min(54vh,460px)] w-full sm:h-[540px]" style="min-height: 300px"></div>
+        <div ref="mapEl" class="h-[min(46vh,440px)] w-full sm:h-[500px]" style="min-height: 300px"></div>
         <span v-if="geoMissing" class="chip chip-amber absolute left-4 top-4 z-[500] shadow-sm">
           <i class="fa-solid fa-magnifying-glass-location" aria-hidden="true"></i>
           正在定位 {{ geoMissing }} 个地点…

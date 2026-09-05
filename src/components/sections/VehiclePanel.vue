@@ -92,11 +92,16 @@ async function deleteSelectedVehicle() {
   await store.removeVehicle(props.plan.id, vehicle.value.id)
 }
 
-/* ---------- 统计 ---------- */
+/* ---------- 统计(燃油/充电区分;混动车油电都计) ---------- */
 const stats = computed(() => {
-  const ordered = logs.value
+  const fuels = logs.value.filter((l) => l.kind !== 'charge') // 燃油/混动加油
+  const charges = logs.value.filter((l) => l.kind === 'charge') // 纯电/混动充电
+  const ordered = fuels.slice().sort((a, b) => (a.date || '').localeCompare(b.date || ''))
   const totalLiters = ordered.reduce((s, l) => s + Number(l.liters || 0), 0)
-  const totalCost = ordered.reduce((s, l) => s + Number(l.amount || 0), 0)
+  const chargeKwh = charges.reduce((s, l) => s + Number(l.liters || 0), 0)
+  const chargeCost = charges.reduce((s, l) => s + Number(l.amount || 0), 0)
+  const fuelCost = ordered.reduce((s, l) => s + Number(l.amount || 0), 0)
+  const totalCost = fuelCost + chargeCost
   let km = 0
   const legs = []
   for (let i = 1; i < ordered.length; i++) {
@@ -110,20 +115,27 @@ const stats = computed(() => {
     }
   }
   const avgLiters = legs.length ? legs.reduce((s, v) => s + v, 0) / legs.length : null
+  const allOdo = logs.value.map((l) => Number(l.odometer)).filter((n) => n > 0)
   return {
     totalCost,
     totalLiters,
+    chargeKwh,
+    chargeCost,
     km,
-    lastOdo: ordered.length ? Number(ordered[ordered.length - 1].odometer || 0) : null,
+    lastOdo: allOdo.length ? Math.max(...allOdo) : null,
     avgLiters,
     costPerKm: km > 0 ? totalCost / km : null
   }
 })
 
-/* ---------- 加油/续航智能建议 ----------
- * 依据:路线中标注的自驾分钟 × 均速 65km/h ≈ 里程;
- * 油耗:优先用车速表填写的百公里油耗,否则用里程表自动测算的均值。
- */
+function vehicleName(id) {
+  return vehicles.value.find((v) => v.id === id)?.name || null
+}
+const isEv = computed(() => vehicle.value?.power === 'ev')
+const unitLabel = computed(() => (isEv.value ? '电' : '油'))
+const unitShort = computed(() => (isEv.value ? 'kWh' : 'L'))
+
+/* ---------- 加油/充电 · 续航智能建议(燃油/混动/纯电自适应) ---------- */
 const ADV_AVG_KMH = 65
 
 const fuelAdvice = computed(() => {
@@ -133,45 +145,55 @@ const fuelAdvice = computed(() => {
   const daysList = store
     .rowsOf(props.plan.id, 'days')
     .map((d) => (d.destinations || []).reduce((s, x) => s + (Number(x.drive_min) || 0), 0))
+  const km = (minutes / 60) * ADV_AVG_KMH
+  const longestDayKm = (Math.max(0, ...daysList) / 60) * ADV_AVG_KMH
+  const tips = []
+  if (!minutes) {
+    tips.push('先在「路线」里为各段点「自动算时长」,这里就能给出加油/充电建议。')
+    return { km: 0, need: 0, stops: 0, oneDayOk: true, tips }
+  }
+
+  if (isEv.value) {
+    // 纯电:按电池容量与电耗估算
+    const avg = Number(vehicle.value?.kwh_100) || (stats.value.chargeKwh && stats.value.km ? (stats.value.chargeKwh / Math.max(1, stats.value.km)) * 100 : 15)
+    const battery = Number(vehicle.value?.battery_kwh) || 60
+    const rangeKm = (battery * 100) / avg
+    const need = (km * avg) / 100
+    const stops = need > 0 ? Math.max(0, Math.ceil(need / (battery * 0.9)) - 1) : 0
+    tips.push(`全程约 ${Math.round(km)} km,预计耗电约 ${Math.round(need)} kWh —— 建议沿途规划 ${stops} 次补电${stops ? '(含快充)' : ''}。`)
+    tips.push(`满电续航约 ${Math.round(rangeKm)} km,最长单日 ${Math.round(longestDayKm)} km。`)
+    if (!vehicle.value?.battery_kwh) tips.push('电池容量未填,按常见 60 kWh 估算;填准后建议更准确。')
+    if (!vehicle.value?.kwh_100) tips.push('电耗未手填,按默认 15 kWh/100km 估算。')
+    return { km, need, stops, oneDayOk: longestDayKm <= rangeKm, tips }
+  }
+
+  // 燃油 / 混动:烧油部分按油耗估算
   const avgLiters = Number(vehicle.value?.cons_l100) || stats.value.avgLiters || 9
   const capacity = Number(vehicle.value?.capacity_l) || 50
-  const km = (minutes / 60) * ADV_AVG_KMH
   const need = (km * avgLiters) / 100
   const rangeKm = (capacity * 100) / avgLiters
   const usable = capacity * 0.85 // 不建议烧干油箱
   const stops = need > 0 ? Math.max(0, Math.ceil(need / usable) - 1) : 0
-  const longestDayKm = ((Math.max(0, ...daysList) / 60) * ADV_AVG_KMH)
   const oneDayOk = longestDayKm <= rangeKm
-
-  const tips = []
-  if (!minutes) {
-    tips.push('先在「路线」里为各段点「自动算时长」,这里就能给出加油建议。')
-    return { km: 0, need: 0, stops: 0, oneDayOk: true, tips }
-  }
-  if (stops > 0) {
-    tips.push(`全程约 ${Math.round(km)} km,预计耗油约 ${Math.round(need)} L —— 建议沿途安排约 ${stops} 次加油。`)
-  } else {
-    tips.push(`全程约 ${Math.round(km)} km,一箱油(按 ${capacity} L)基本够用,出发前加满即可。`)
-  }
-  if (!oneDayOk) {
-    tips.push(`最长单日行驶约 ${Math.round(longestDayKm)} km,超出满箱续航,那天中途记得补油。`)
-  } else {
-    tips.push(`满箱续航约 ${Math.round(rangeKm)} km,最长单日 ${Math.round(longestDayKm)} km,单日无忧。`)
-  }
-  if (!vehicle.value?.cons_l100) {
-    tips.push(`油耗未手填,按记录测算 ${stats.value.avgLiters ? stats.value.avgLiters.toFixed(1) : '默认 9'} L/100km 估算。`)
-  }
-  if (!vehicle.value?.capacity_l) {
-    tips.push(`油箱容积未填,按常见 ${capacity} L 估算;填准后建议更准确。`)
+  tips.push(
+    stops > 0
+      ? `全程约 ${Math.round(km)} km,预计耗油约 ${Math.round(need)} L —— 建议沿途安排约 ${stops} 次加油。`
+      : `全程约 ${Math.round(km)} km,一箱油(按 ${capacity} L)基本够用,出发前加满即可。`
+  )
+  tips.push(oneDayOk ? `满箱续航约 ${Math.round(rangeKm)} km,最长单日 ${Math.round(longestDayKm)} km,单日无忧。` : `最长单日行驶约 ${Math.round(longestDayKm)} km,超出满箱续航,那天中途记得补油。`)
+  if (!vehicle.value?.cons_l100) tips.push(`油耗未手填,按记录测算 ${stats.value.avgLiters ? stats.value.avgLiters.toFixed(1) : '默认 9'} L/100km 估算。`)
+  if (!vehicle.value?.capacity_l) tips.push(`油箱容积未填,按常见 ${capacity} L 估算。`)
+  if (vehicle.value?.power === 'hybrid' && stats.value.chargeKwh) {
+    tips.push(`混动额外充电 ${Math.round(stats.value.chargeKwh)} kWh(花费 ¥${Math.round(stats.value.chargeCost)}),可计入总费用。`)
   }
   return { km, need, stops, oneDayOk, tips }
 })
 
-/* ---------- 加油记录 ---------- */
+/* ---------- 加油/充电记录 ---------- */
 const showFuel = ref(false)
 const fuelForm = reactive({
   date: todayISO(), odometer: '', liters: '', amount: '',
-  paid_by: null, involves: [], syncBill: true, note: ''
+  vehicle_id: null, kind: 'fuel', paid_by: null, involves: [], syncBill: true, note: ''
 })
 
 function openAddFuel() {
@@ -181,6 +203,8 @@ function openAddFuel() {
     odometer: stats.value.lastOdo ?? '',
     liters: '',
     amount: '',
+    vehicle_id: vehicleSel.value,
+    kind: isEv.value ? 'charge' : 'fuel',
     paid_by: all[0] ? { id: all[0].id, name: all[0].name } : null,
     involves: all.map((p) => ({ id: p.id, name: p.name })),
     syncBill: true,
@@ -201,19 +225,22 @@ async function saveFuel() {
   if (!canSaveFuel.value) return
   const amount = Math.round(Number(fuelForm.amount || 0) * 100) / 100
   const num = (v) => (v === '' || v === null || v === undefined || !Number.isFinite(Number(v)) ? null : Number(v))
+  const isCharge = fuelForm.kind === 'charge'
   const payload = {
     date: fuelForm.date,
     odometer: num(fuelForm.odometer),
     liters: num(fuelForm.liters),
     amount,
+    vehicle_id: fuelForm.vehicle_id || null,
+    kind: fuelForm.kind,
     paid_by: fuelForm.paid_by ? { id: fuelForm.paid_by.id, name: fuelForm.paid_by.name } : null,
     bill_id: null,
     note: fuelForm.note.trim()
   }
   if (fuelForm.syncBill) {
-    // ★ 同步进分账:创建一笔油费账单,记录其 bill_id 以便联删
+    // ★ 同步进分账:创建一笔账单(加油/充电),记录 bill_id 以便联删
     const row = await store.addBill(props.plan.id, {
-      name: `加油 · ${fmtDay(fuelForm.date, false)}${fuelForm.note ? ' ' + fuelForm.note : ''}`,
+      name: `${isCharge ? '充电' : '加油'} · ${fmtDay(fuelForm.date, false)}${fuelForm.note ? ' ' + fuelForm.note : ''}`,
       amount,
       category: 'fuel',
       paid_by: payload.paid_by,
@@ -305,14 +332,26 @@ async function saveFuel() {
     <!-- 统计 -->
     <div class="grid grid-cols-2 gap-4 xl:grid-cols-4">
       <div class="card card-lift p-4">
-        <p class="muted text-[11.5px] font-semibold">加油花费</p>
+        <p class="muted text-[11.5px] font-semibold">油电花费</p>
         <p class="mt-1 text-[19px] font-bold text-ink">{{ money(stats.totalCost) }}</p>
-        <p class="text-[11.5px] text-muted">共 {{ logs.length }} 次</p>
+        <p class="text-[11.5px] text-muted">
+          共 {{ logs.length }} 次<template v-if="stats.chargeCost"> · 充电 {{ money(stats.chargeCost) }}</template>
+        </p>
       </div>
       <div class="card card-lift p-4">
-        <p class="muted text-[11.5px] font-semibold">加油量</p>
-        <p class="mt-1 text-[19px] font-bold text-ink">{{ stats.totalLiters ? stats.totalLiters.toFixed(1) : 0 }} <span class="text-[13px]">L</span></p>
-        <p class="text-[11.5px] text-muted">约 {{ stats.costPerKm ? Math.round(stats.totalLiters / Math.max(1, stats.km) * 100) : '--' }} L/100km</p>
+        <p class="muted text-[11.5px] font-semibold">补充量(油/电)</p>
+        <p class="mt-1 text-[19px] font-bold text-ink">
+          {{ stats.totalLiters ? stats.totalLiters.toFixed(1) : 0 }} <span class="text-[13px]">L</span>
+          <template v-if="stats.chargeKwh"> + {{ stats.chargeKwh.toFixed(1) }} kWh</template>
+        </p>
+        <p class="text-[11.5px] text-muted">
+          <template v-if="isEv">
+            电耗约 {{ stats.chargeKwh && stats.km ? Math.round((stats.chargeKwh / stats.km) * 100) : vehicle?.kwh_100 || '--' }} kWh/100km
+          </template>
+          <template v-else>
+            油耗约 {{ stats.costPerKm ? Math.round(stats.totalLiters / Math.max(1, stats.km) * 100) : vehicle?.cons_l100 || '--' }} L/100km
+          </template>
+        </p>
       </div>
       <div class="card card-lift p-4">
         <p class="muted text-[11.5px] font-semibold">行驶里程</p>
@@ -320,8 +359,12 @@ async function saveFuel() {
         <p class="text-[11.5px] text-muted">按相邻两次里程表差值</p>
       </div>
       <div class="card card-lift p-4">
-        <p class="muted text-[11.5px] font-semibold">百公里油耗</p>
-        <p class="mt-1 text-[19px] font-bold text-ink">{{ stats.avgLiters ? stats.avgLiters.toFixed(1) : '--' }} <span class="text-[13px]">L</span></p>
+        <p class="muted text-[11.5px] font-semibold">{{ isEv ? '百公里电耗' : '百公里油耗' }}</p>
+        <p class="mt-1 text-[19px] font-bold text-ink">
+          <template v-if="isEv">{{ stats.chargeKwh && stats.km ? ((stats.chargeKwh / stats.km) * 100).toFixed(1) : vehicle?.kwh_100 || '--' }}</template>
+          <template v-else>{{ stats.avgLiters ? stats.avgLiters.toFixed(1) : vehicle?.cons_l100 || '--' }}</template>
+          <span class="text-[13px]">{{ isEv ? 'kWh' : 'L' }}</span>
+        </p>
         <p class="text-[11.5px] text-muted">每公里成本 {{ stats.costPerKm ? '¥' + stats.costPerKm.toFixed(2) : '--' }}</p>
       </div>
     </div>
@@ -330,12 +373,12 @@ async function saveFuel() {
     <div class="card p-5">
       <p class="title-2 mb-3 flex items-center gap-2">
         <i class="fa-solid fa-gauge-high text-primary" aria-hidden="true"></i>
-        加油 / 续航建议
+        {{ isEv ? '充电 / 续航建议' : '加油 / 续航建议' }}
         <span v-if="fuelAdvice.km > 0" class="chip chip-plain !text-[11px]">
           <i class="fa-solid fa-route mr-1 text-primary/70" aria-hidden="true"></i>全程约 {{ Math.round(fuelAdvice.km) }} km
         </span>
         <span v-if="fuelAdvice.stops > 0" class="chip chip-amber !text-[11px]">
-          <span class="dot"></span>建议加油 {{ fuelAdvice.stops }} 次
+          <span class="dot"></span>{{ isEv ? '建议补电' : '建议加油' }} {{ fuelAdvice.stops }} 次
         </span>
       </p>
       <ul class="space-y-2 text-[13px] leading-relaxed text-ink-soft">
@@ -352,7 +395,7 @@ async function saveFuel() {
 
     <!-- 记录列表 -->
     <div class="flex items-center justify-between">
-      <p class="title-2">加油 / 里程记录</p>
+      <p class="title-2">{{ isEv ? '充电 / 里程记录' : '加油 / 里程记录' }}</p>
       <BaseButton v-if="canEdit" size="sm" icon="fa-plus" @click="openAddFuel">记录一次</BaseButton>
     </div>
 
@@ -360,11 +403,14 @@ async function saveFuel() {
       <article v-for="(l, i) in logs.slice().reverse()" :key="l.id" class="card card-lift flex flex-wrap items-center gap-x-6 gap-y-2 px-5 py-3.5">
         <span class="text-[12.5px] font-semibold tabular-nums text-ink">{{ fmtDay(l.date) }}</span>
         <span class="flex items-center gap-1.5 text-[13px] text-ink-soft">
-          <i class="fa-solid fa-gas-pump text-primary/70" aria-hidden="true"></i>
-          {{ l.liters ? l.liters + ' L' : '--' }}
+          <i :class="`fa-solid ${l.kind === 'charge' ? 'fa-bolt text-amber' : 'fa-gas-pump text-primary/70'}`" aria-hidden="true"></i>
+          {{ l.liters ? l.liters + (l.kind === 'charge' ? ' kWh' : ' L') : '--' }}
         </span>
         <span class="text-[13px] font-bold text-ink">{{ money(l.amount) }}</span>
         <span v-if="l.odometer" class="muted text-[12px]">里程 {{ Math.round(l.odometer) }} km</span>
+        <span v-if="vehicleName(l.vehicle_id)" class="chip chip-plain !text-[11px]">
+          <i class="fa-solid fa-car-side mr-1 text-primary/70" aria-hidden="true"></i>{{ vehicleName(l.vehicle_id) }}
+        </span>
         <span v-if="l.bill_id" class="chip chip-success !text-[11px]"><i class="fa-solid fa-scale-balanced" aria-hidden="true"></i>已记入分账</span>
         <span v-if="l.paid_by" class="ml-auto flex items-center gap-1.5 text-[12px] text-muted">
           <Avatar :name="l.paid_by.name" :size="18" :ring="false" />{{ l.paid_by.name }} 垫付
@@ -379,11 +425,36 @@ async function saveFuel() {
         </button>
       </article>
     </div>
-    <p v-else class="muted text-center text-[13px]">还没有加油记录 —— {{ canEdit ? '记一次满箱,油耗就有了参考' : '等待成员记录' }}</p>
+    <p v-else class="muted text-center text-[13px]">
+      还没有{{ isEv ? '充电' : '加油' }}记录 —— {{ canEdit ? '记一次满箱/满电,能耗就有了参考' : '等待成员记录' }}
+    </p>
 
     <!-- 加油记录弹窗 -->
-    <BaseModal v-model="showFuel" title="记录加油" :max-width="'480px'">
+    <BaseModal v-model="showFuel" title="记录一次" :max-width="'480px'">
       <div class="space-y-4">
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="muted text-[12px]">类型:</span>
+          <button
+            v-for="k in [{ key: 'fuel', label: '加油' }, { key: 'charge', label: '充电' }]"
+            :key="k.key"
+            type="button"
+            class="chip cursor-pointer transition-all duration-150 active:scale-95"
+            :class="fuelForm.kind === k.key ? 'chip-brand' : 'chip-plain'"
+            @click="fuelForm.kind = k.key"
+          >
+            <i :class="`fa-solid ${k.key === 'charge' ? 'fa-bolt' : 'fa-gas-pump'}`" aria-hidden="true"></i>{{ k.label }}
+          </button>
+        </div>
+        <div v-if="vehicles.length > 1">
+          <label class="flabel">记在哪辆车</label>
+          <select v-model="fuelForm.vehicle_id" class="field">
+            <option :value="null">不指定</option>
+            <option v-for="v in vehicles" :key="v.id" :value="v.id">
+              {{ v.name || '新车' }} · {{ v.power === 'ev' ? '纯电' : v.power === 'hybrid' ? '混动' : '燃油' }}
+              <template v-if="v.plate"> · {{ v.plate }}</template>
+            </option>
+          </select>
+        </div>
         <div class="grid grid-cols-3 gap-3">
           <div>
             <label class="flabel">日期</label>
@@ -394,8 +465,8 @@ async function saveFuel() {
             <input v-model="fuelForm.odometer" type="number" class="field" placeholder="32140" />
           </div>
           <div>
-            <label class="flabel">加油量 L</label>
-            <input v-model="fuelForm.liters" type="number" step="0.1" class="field" placeholder="45.6" />
+            <label class="flabel">{{ fuelForm.kind === 'charge' ? '充电量 kWh' : '加油量 L' }}</label>
+            <input v-model="fuelForm.liters" type="number" step="0.1" class="field" :placeholder="fuelForm.kind === 'charge' ? '33.0' : '45.6'" />
           </div>
         </div>
         <div>
