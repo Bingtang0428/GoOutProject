@@ -96,27 +96,63 @@ create table if not exists public.bills (
   created_at  timestamptz not null default now()
 );
 
--- 邀请码登录(替代邮箱注册):一次性码,扫码/输入即可加入
+-- 邀请码登录(替代邮箱注册):码可设置使用次数 1-100
 create table if not exists public.invite_codes (
   id          uuid primary key default gen_random_uuid(),
-  code        text not null unique,              -- 一次性邀请码(可含字母数字 -)
+  code        text not null unique,              -- 邀请码(可含字母数字 -)
   role        text not null default 'member'
               check (role in ('admin','member','viewer')),
   plan_id     uuid references public.plans(id) on delete cascade, -- 成员/围观码必须绑定计划
   label       text not null default '',          -- 用途备注,如 “接待民宿老板”
+  max_uses    int  not null default 1 check (max_uses between 1 and 100),
+  use_count   int  not null default 0,
   created_by  jsonb,                             -- 谁生成的
   created_at  timestamptz not null default now(),
-  used_by     jsonb,                             -- 谁用了 {id,name}
+  used_by     jsonb,                             -- 最近一次使用者 {id,name}
   used_at     timestamptz,
   revoked     boolean not null default false
 );
 
 -- 初始管理员码(请登录后台后尽快在「邀请码管理」里撤销并重新生成)
-insert into public.invite_codes (code, role, label)
-select 'TT-ADMIN-2026', 'admin', '内置管理员(首次登录后请撤销)'
+insert into public.invite_codes (code, role, label, max_uses)
+select 'TT-ADMIN-2026', 'admin', '内置管理员(首次登录后请撤销)', 3
 where not exists (select 1 from public.invite_codes where role = 'admin');
 
 create index if not exists idx_invite_codes_plan on public.invite_codes(plan_id);
+
+-- ★ 占用邀请码(带次数控制,原子操作)
+create or replace function public.claim_invite(p_code text, p_user jsonb)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  rec public.invite_codes%rowtype;
+begin
+  select * into rec from public.invite_codes where code = p_code limit 1 for update;
+  if not found then
+    return jsonb_build_object('ok', false, 'reason', 'invite_not_found');
+  end if;
+  if rec.revoked then
+    return jsonb_build_object('ok', false, 'reason', 'invite_revoked');
+  end if;
+  if rec.use_count >= rec.max_uses then
+    return jsonb_build_object('ok', false, 'reason', 'invite_exhausted');
+  end if;
+  update public.invite_codes
+     set use_count = use_count + 1,
+         used_at   = now(),
+         used_by   = p_user
+   where id = rec.id;
+  return jsonb_build_object(
+    'ok', true,
+    'role', rec.role,
+    'plan_id', rec.plan_id,
+    'remaining', rec.max_uses - rec.use_count - 1
+  );
+end;
+$$;
 
 
 create table if not exists public.comments (

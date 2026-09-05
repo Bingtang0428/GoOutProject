@@ -38,7 +38,7 @@ const stats = computed(() => ({
   plans: plansStore.plans.length,
   people: peopleSet.value.size,
   codes: codes.value.length,
-  unused: codes.value.filter((c) => !c.used_by && !c.revoked).length
+  unused: codes.value.filter((c) => !c.use_count && !c.revoked).length
 }))
 
 async function loadCodes() {
@@ -58,6 +58,7 @@ const genRole = ref('member') // admin | member | viewer
 const genPlanId = ref('')
 const genLabel = ref('')
 const genCode = ref('')
+const genMaxUses = ref(1) // 1-100
 const genBusy = ref(false)
 
 function randCode(role) {
@@ -69,6 +70,7 @@ function openGen() {
   genRole.value = 'member'
   genPlanId.value = plansStore.plans[0]?.id || ''
   genLabel.value = ''
+  genMaxUses.value = 1
   genCode.value = randCode('member')
   showGen.value = true
 }
@@ -77,6 +79,11 @@ function onGenRoleChange() {
   if (genRole.value !== 'admin') genPlanId.value = plansStore.plans[0]?.id || ''
   else genPlanId.value = ''
   genCode.value = randCode(genRole.value)
+}
+
+function usesValue() {
+  const n = Math.round(Number(genMaxUses.value))
+  return Number.isFinite(n) ? Math.min(100, Math.max(1, n)) : 1
 }
 
 async function createCode() {
@@ -93,6 +100,8 @@ async function createCode() {
       role: genRole.value,
       plan_id: genRole.value === 'admin' ? null : genPlanId.value,
       label: genLabel.value.trim(),
+      max_uses: usesValue(),
+      use_count: 0,
       created_by: auth.user ? { id: auth.user.id, name: auth.user.name } : null
     })
     if (error) throw error
@@ -201,7 +210,7 @@ async function deletePlan(plan) {
         <section class="card mb-6 p-5 sm:p-6">
           <h2 class="title-2 mb-4 flex items-center gap-2">
             <i class="fa-solid fa-key text-primary" aria-hidden="true"></i>邀请码
-            <span class="muted text-[12.5px] font-normal">一次性使用 · 成员码/围观码需绑定计划</span>
+            <span class="muted text-[12.5px] font-normal">支持设置使用次数(1-100)· 成员码/围观码需绑定计划</span>
           </h2>
           <div v-if="codes.length" class="space-y-2">
             <div v-for="c in codes" :key="c.id" class="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-[12px] bg-surface-2/60 px-4 py-3">
@@ -209,11 +218,17 @@ async function deletePlan(plan) {
               <span class="chip" :class="ROLE_TAG[c.role]?.cls || 'chip-plain'">{{ ROLE_TAG[c.role]?.text }}</span>
               <span v-if="c.plan_id" class="chip chip-plain">{{ planById(c.plan_id)?.name || '计划已删除' }}</span>
               <span v-if="c.label" class="muted text-[12px]">{{ c.label }}</span>
+              <span class="chip chip-plain">
+                使用 {{ c.use_count || 0 }}/{{ c.max_uses ?? 1 }}
+              </span>
               <span class="ml-auto flex items-center gap-2 text-[12px]">
                 <span v-if="c.revoked" class="chip chip-rose">已撤销</span>
-                <span v-else-if="c.used_by" class="chip chip-plain">已使用 · {{ c.used_by.name }}</span>
-                <span v-else class="chip chip-success">未使用</span>
-                <button v-if="!c.revoked && !c.used_by" class="chip chip-amber cursor-pointer" @click="revokeCode(c.id)">撤销</button>
+                <span v-else-if="c.use_count >= c.max_uses" class="chip chip-plain">次数已用完<template v-if="c.used_by"> · {{ c.used_by.name }}</template></span>
+                <span v-else class="chip chip-success">
+                  <template v-if="c.use_count">已用 {{ c.use_count }} 次<template v-if="c.used_by">(最近 {{ c.used_by.name }})</template> · </template>
+                  剩 {{ (c.max_uses ?? 1) - c.use_count }} 次
+                </span>
+                <button v-if="!c.revoked && (c.use_count || 0) < (c.max_uses ?? 1)" class="chip chip-amber cursor-pointer" @click="revokeCode(c.id)">撤销</button>
                 <button class="icon-btn !h-7 !w-7" title="复制" @click="copyText(c.code)">
                   <i class="fa-solid fa-copy text-[12px]" aria-hidden="true"></i>
                 </button>
@@ -325,6 +340,13 @@ async function deletePlan(plan) {
           </select>
         </div>
         <div>
+          <label class="flabel">可用次数(1-100)</label>
+          <div class="flex items-center gap-3">
+            <input v-model.number="genMaxUses" type="number" min="1" max="100" class="field !w-28" />
+            <span class="muted text-[12px]">该码共可被登录使用 {{ usesValue() }} 次,次数用完自动失效</span>
+          </div>
+        </div>
+        <div>
           <label class="flabel">用途备注(可选)</label>
           <input v-model="genLabel" class="field" placeholder="例如:接待杭州来的苏晚" maxlength="40" />
         </div>
@@ -335,7 +357,7 @@ async function deletePlan(plan) {
             <BaseButton variant="soft" size="sm" icon="fa-shuffle" @click="genCode = randCode(genRole)">换一个</BaseButton>
           </div>
         </div>
-        <p class="muted text-[12px]"><i class="fa-solid fa-lightbulb mr-1 text-amber" aria-hidden="true"></i>邀请码为一次性,使用后自动失效;可随时在列表里撤销。</p>
+        <p class="muted text-[12px]"><i class="fa-solid fa-lightbulb mr-1 text-amber" aria-hidden="true"></i>邀请码可被多次使用(次数用尽自动失效);可随时在列表里撤销剩余次数。</p>
       </div>
       <template #footer>
         <BaseButton variant="ghost" @click="showGen = false">取消</BaseButton>
