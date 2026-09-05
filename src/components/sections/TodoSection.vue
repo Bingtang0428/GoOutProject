@@ -1,4 +1,4 @@
-<script setup>
+﻿<script setup>
 // ============================================================
 // TODO List:圆形自定义复选框 + 截止日期标签(小圆点)
 // 完成时勾选圈旋转打勾、文字变灰加删除线(动画)
@@ -6,7 +6,7 @@
 import { ref, computed } from 'vue'
 import { useContentStore } from '@/stores/content'
 import { useAuthStore } from '@/stores/auth'
-import { relKey, fmtDay } from '@/utils/date'
+import { relKey, fmtDay, eachDayISO } from '@/utils/date'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseModal from '@/components/ui/BaseModal.vue'
 import BaseCheckbox from '@/components/ui/BaseCheckbox.vue'
@@ -32,6 +32,13 @@ const assignFor = ref(null) // 正在指派负责人的任务 id
 const participants = computed(() => (props.plan.members || []).slice())
 const me = computed(() => auth.user || {})
 
+/* Day 归属(第 N 天 = 出发日偏移 N-1) */
+const plannedDates = computed(() =>
+  props.plan.start_date && props.plan.end_date ? eachDayISO(props.plan.start_date, props.plan.end_date) : []
+)
+const filterDay = ref(null) // null=全部,0=未定,N=第 N 天
+const newDay = ref(null)
+
 /** 判断某任务是否属于我(按 id 或昵称) */
 const isMine = (t) => {
   const a = t.assignee
@@ -47,6 +54,10 @@ const filtered = computed(() => {
   if (filter.value === 'open') return list.filter((t) => !t.done)
   if (filter.value === 'done') return list.filter((t) => t.done)
   if (filter.value === 'mine') return list.filter((t) => isMine(t))
+  if (filterDay.value !== null) {
+    if (filterDay.value === 0) return list.filter((t) => !t.day)
+    return list.filter((t) => t.day === filterDay.value)
+  }
   return list
 })
 
@@ -56,10 +67,15 @@ const pct = computed(() => (todos.value.length ? Math.round((doneCount.value / t
 async function add() {
   const title = newTitle.value.trim()
   if (!title) return
-  await store.addTodo(props.plan.id, { title, due: newDue.value || null })
+  await store.addTodo(props.plan.id, { title, due: newDue.value || null, day: newDay.value })
+  showAdd.value = false
+}
+
+function openAdd() {
   newTitle.value = ''
   newDue.value = ''
-  showAdd.value = false
+  newDay.value = null
+  showAdd.value = true
 }
 
 function dueTone(due) {
@@ -77,6 +93,10 @@ function dueText(due) {
   if (k === 'today') return '今天'
   if (k === 'tomorrow') return '明天'
   return fmtDay(due, false)
+}
+
+function countOfDay(n) {
+  return todos.value.filter((t) => (n === 0 ? !t.day : t.day === n)).length
 }
 
 const FILTERS = [
@@ -105,7 +125,7 @@ function countOf(key) {
         </h2>
         <p class="muted mt-1">{{ doneCount }} / {{ todos.length }} 项已完成,协作成员的勾选实时同步</p>
       </div>
-      <BaseButton v-if="canEdit" icon="fa-plus" @click="showAdd = true">添加任务</BaseButton>
+      <BaseButton v-if="canEdit" icon="fa-plus" @click="openAdd()">添加任务</BaseButton>
     </div>
 
     <div class="mx-auto max-w-2xl">
@@ -119,6 +139,30 @@ function countOf(key) {
         >
           {{ f.label }} · {{ countOf(f.key) }}
         </button>
+      </div>
+
+      <!-- Day 分组切换 -->
+      <div v-if="todos.length" class="mb-5 flex flex-wrap items-center gap-2">
+        <button
+          class="chip cursor-pointer transition-all duration-150 active:scale-95"
+          :class="filterDay === null ? 'chip-brand' : 'chip-plain'"
+          @click="filterDay = null"
+        >全部日期 · {{ todos.length }}</button>
+        <button
+          v-for="(d, i) in plannedDates"
+          :key="d"
+          class="chip cursor-pointer whitespace-nowrap transition-all duration-150 active:scale-95"
+          :class="filterDay === i + 1 ? 'chip-brand' : 'chip-plain'"
+          @click="filterDay = filterDay === i + 1 ? null : i + 1"
+        >
+          Day {{ i + 1 }} · {{ fmtDay(d, false) }} · {{ countOfDay(i + 1) }}
+        </button>
+        <button
+          v-if="countOfDay(0)"
+          class="chip chip-amber cursor-pointer whitespace-nowrap transition-all duration-150 active:scale-95"
+          :class="filterDay === 0 ? '!bg-rose/20 !text-rose' : ''"
+          @click="filterDay = filterDay === 0 ? null : 0"
+        >未定日 · {{ countOfDay(0) }}</button>
       </div>
 
       <div v-if="filtered.length" class="space-y-3">
@@ -177,6 +221,11 @@ function countOf(key) {
               {{ t.assignee?.name || (canEdit ? '指派' : '未指派') }}
             </button>
 
+            <!-- Day 归属 -->
+            <span v-if="t.day" class="chip chip-plain shrink-0 !px-2 !py-0 !text-[11px]" title="第 {{ t.day }} 天">
+              D{{ t.day }}
+            </span>
+
             <!-- 截止日期标签:小圆点 + 文字;已到期 rose / 今天 amber -->
             <template v-if="canEdit && pickDueFor === t.id">
               <input
@@ -222,7 +271,7 @@ function countOf(key) {
         :title="todos.length ? '这里没有符合筛选的任务' : '清单还是空的'"
         :desc="todos.length ? '换个筛选看看' : '出发前的小事都写进来,比如检查车况、订门票'"
       >
-        <BaseButton v-if="canEdit && !todos.length" icon="fa-plus" @click="showAdd = true">添加第一个任务</BaseButton>
+        <BaseButton v-if="canEdit && !todos.length" icon="fa-plus" @click="openAdd()">添加第一个任务</BaseButton>
       </EmptyState>
     </div>
 
@@ -238,6 +287,25 @@ function countOf(key) {
             maxlength="60"
             @keyup.enter="add"
           />
+        </div>
+        <div>
+          <label class="flabel">安排在哪一天</label>
+          <div class="flex flex-wrap gap-2">
+            <button
+              type="button"
+              class="chip transition-all duration-150 active:scale-95"
+              :class="newDay === null ? 'chip-brand' : 'chip-plain'"
+              @click="newDay = null"
+            >未定</button>
+            <button
+              v-for="(d, i) in plannedDates"
+              :key="d"
+              type="button"
+              class="chip transition-all duration-150 active:scale-95"
+              :class="newDay === i + 1 ? 'chip-brand' : 'chip-plain'"
+              @click="newDay = i + 1"
+            >Day {{ i + 1 }} · {{ fmtDay(d, false) }}</button>
+          </div>
         </div>
         <div>
           <label class="flabel">截止日期(可选)</label>

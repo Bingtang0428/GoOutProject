@@ -5,7 +5,9 @@
 // ============================================================
 import { ref, computed, reactive } from 'vue'
 import { useContentStore } from '@/stores/content'
+import { eachDayISO, fmtDay } from '@/utils/date'
 import BaseModal from '@/components/ui/BaseModal.vue'
+import Avatar from '@/components/ui/Avatar.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseTag from '@/components/ui/BaseTag.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
@@ -22,14 +24,42 @@ const foodCount = computed(() => stays.value.filter((s) => s.type === 'food').le
 
 const PRESET_TAGS = ['免费停车', '含早', '人均¥100', '可带宠物']
 
+/* Day 分组:第 N 天 = 出发日偏移 N-1;day=0 表示未定日 */
+const plannedDates = computed(() =>
+  props.plan.start_date && props.plan.end_date ? eachDayISO(props.plan.start_date, props.plan.end_date) : []
+)
+const dayGroups = computed(() =>
+  plannedDates.value.map((date, i) => ({
+    day: i + 1,
+    label: `Day ${i + 1} · ${fmtDay(date, false)}`,
+    items: stays.value.filter((s) => s.day === i + 1)
+  }))
+)
+const noDayItems = computed(() => stays.value.filter((s) => !s.day))
+const filterDay = ref(null) // null=全部,0=未定日,N=第 N 天
+const groupsForShow = computed(() => {
+  const groups = dayGroups.value.filter((g) => filterDay.value === null || g.day === filterDay.value)
+  if (filterDay.value === null || filterDay.value === 0) {
+    if (noDayItems.value.length) groups.push({ day: 0, label: '未定日', items: noDayItems.value })
+  }
+  return groups
+})
+
 // —— 新增 / 编辑弹窗
 const showEdit = ref(false)
 const editingId = ref(null) // null = 新增
-const form = reactive({ type: 'stay', name: '', address: '', phone: '', tags: [], booked: false, tagInput: '' })
+const form = reactive({ type: 'stay', name: '', address: '', phone: '', tags: [], booked: false, tagInput: '', assignee: null, day: null })
+
+const participants = computed(() => (props.plan.members || []).slice())
+
+/** 地址 → 高德/国内地图检索链接 */
+function mapUrl(address) {
+  return `https://uri.amap.com/search?keyword=${encodeURIComponent(address)}`
+}
 
 function openAdd() {
   editingId.value = null
-  Object.assign(form, { type: 'stay', name: '', address: '', phone: '', tags: [], booked: false, tagInput: '' })
+  Object.assign(form, { type: 'stay', name: '', address: '', phone: '', tags: [], booked: false, tagInput: '', assignee: null, day: null })
   showEdit.value = true
 }
 
@@ -42,7 +72,9 @@ function openEdit(item) {
     phone: item.phone,
     tags: [...(item.tags || [])],
     booked: item.booked,
-    tagInput: ''
+    tagInput: '',
+    assignee: item.assignee || null,
+    day: item.day ?? null
   })
   showEdit.value = true
 }
@@ -68,7 +100,9 @@ async function save() {
     address: form.address.trim(),
     phone: form.phone.trim(),
     tags: form.tags,
-    booked: form.booked
+    booked: form.booked,
+    assignee: form.assignee,
+    day: form.day
   }
   if (editingId.value) await store.updateStay(props.plan.id, editingId.value, payload)
   else await store.addStay(props.plan.id, payload)
@@ -101,10 +135,44 @@ function tagTone(tag) {
       <BaseButton v-if="canEdit" icon="fa-plus" @click="openAdd">添加食宿</BaseButton>
     </div>
 
-    <!-- 两列网格(≥768px 并排) -->
-    <div v-if="stays.length" class="grid grid-cols-1 gap-6 md:grid-cols-2">
-      <TransitionGroup name="fade-up-list" tag="div" class="contents">
-        <article v-for="s in stays" :key="s.id" class="card card-lift group flex flex-col p-6">
+    <!-- Day 分组标题与切换 -->
+    <template v-if="stays.length">
+    <div class="mb-4 flex flex-wrap gap-2">
+      <button
+        class="chip cursor-pointer transition-all duration-150 active:scale-95"
+        :class="filterDay === null ? 'chip-brand' : 'chip-plain'"
+        @click="filterDay = null"
+      >全部 · {{ stays.length }}</button>
+      <button
+        v-for="g in dayGroups"
+        :key="g.day"
+        class="chip cursor-pointer whitespace-nowrap transition-all duration-150 active:scale-95"
+        :class="filterDay === g.day ? 'chip-brand' : 'chip-plain'"
+        @click="filterDay = g.day"
+      >
+        {{ g.label }} · {{ g.items.length }}
+      </button>
+      <button
+        v-if="noDayItems.length"
+        class="chip chip-amber cursor-pointer whitespace-nowrap transition-all duration-150 active:scale-95"
+        :class="filterDay === 0 ? '!bg-rose/20 !text-rose' : ''"
+        @click="filterDay = 0"
+      >未定日 · {{ noDayItems.length }}</button>
+    </div>
+
+    <!-- 两列网格(≥768px 并排),按 Day 严格分组展示 -->
+    <template>
+      <template v-for="g in groupsForShow" :key="'g' + g.day">
+        <p class="mb-3 flex items-center gap-3 text-[13.5px] font-bold text-ink">
+          <span
+            class="flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold text-white"
+            :class="g.day === 0 ? 'bg-muted' : 'bg-primary'"
+          >{{ g.day === 0 ? '·' : g.day }}</span>
+          {{ g.label }}
+          <span class="h-px flex-1 bg-line"></span>
+        </p>
+        <div class="grid grid-cols-1 gap-6 md:grid-cols-2">
+          <article v-for="s in g.items" :key="s.id" class="card card-lift group flex flex-col p-6">
           <header class="mb-4 flex items-start justify-between gap-3">
             <div class="flex items-center gap-3">
               <span
@@ -135,11 +203,26 @@ function tagTone(tag) {
 
           <div class="muted mb-1.5 flex items-start gap-2.5 text-[13px]">
             <i class="fa-solid fa-location-dot mt-0.5 text-[12px]" aria-hidden="true"></i>
-            <span class="flex-1">{{ s.address || '地址待补充' }}</span>
+            <a
+              v-if="s.address"
+              class="flex-1 font-medium text-ink-soft underline decoration-line underline-offset-2 transition-colors hover:text-primary"
+              :href="mapUrl(s.address)"
+              target="_blank"
+              rel="noopener"
+              title="在高德地图中查看"
+            >
+              {{ s.address }}
+              <i class="fa-solid fa-arrow-up-right-from-square ml-0.5 text-[9px]" aria-hidden="true"></i>
+            </a>
+            <span v-else class="flex-1">{{ '地址待补充' }}</span>
           </div>
-          <div v-if="s.phone" class="mb-3 flex items-center gap-2.5 text-[13px]">
+          <div v-if="s.phone" class="mb-1.5 flex items-center gap-2.5 text-[13px]">
             <i class="fa-solid fa-phone text-[12px] text-primary" aria-hidden="true"></i>
             <a class="font-medium text-primary hover:underline" :href="`tel:${s.phone}`">{{ s.phone }}</a>
+          </div>
+          <div v-if="s.assignee" class="mb-1.5 flex items-center gap-2 text-[12.5px] text-ink-soft">
+            <i class="fa-solid fa-user-check text-[11px] text-primary/70" aria-hidden="true"></i>
+            负责:<Avatar :name="s.assignee.name" :size="18" :ring="false" class="ml-1" />{{ s.assignee.name }}
           </div>
 
           <div v-if="s.tags?.length" class="mb-4 flex flex-wrap gap-2">
@@ -170,8 +253,10 @@ function tagTone(tag) {
             </span>
           </footer>
         </article>
-      </TransitionGroup>
-    </div>
+        </div>
+      </template>
+    </template>
+    </template>
 
     <EmptyState
       v-else
@@ -201,6 +286,25 @@ function tagTone(tag) {
           </div>
         </div>
         <div>
+          <label class="flabel">安排在哪一天</label>
+          <div class="flex flex-wrap gap-2">
+            <button
+              type="button"
+              class="chip transition-all duration-150 active:scale-95"
+              :class="form.day === null ? 'chip-brand' : 'chip-plain'"
+              @click="form.day = null"
+            >未定日</button>
+            <button
+              v-for="(d, i) in plannedDates"
+              :key="d"
+              type="button"
+              class="chip transition-all duration-150 active:scale-95"
+              :class="form.day === i + 1 ? 'chip-brand' : 'chip-plain'"
+              @click="form.day = i + 1"
+            >第{{ i + 1 }}天 · {{ fmtDay(d, false) }}</button>
+          </div>
+        </div>
+        <div>
           <label class="flabel">名称 *</label>
           <input v-model="form.name" class="field" placeholder="酒店 / 餐厅名称" maxlength="40" />
         </div>
@@ -211,6 +315,21 @@ function tagTone(tag) {
         <div>
           <label class="flabel">预订电话</label>
           <input v-model="form.phone" class="field" type="tel" placeholder="用于一键拨打" />
+        </div>
+        <div>
+          <label class="flabel">负责成员(可选,用于人员分配)</label>
+          <div class="flex flex-wrap gap-2">
+            <button
+              v-for="p in participants"
+              :key="p.id"
+              type="button"
+              class="chip transition-all duration-150 active:scale-95"
+              :class="form.assignee?.id === p.id ? 'chip-brand' : 'chip-plain opacity-70'"
+              @click="form.assignee = form.assignee?.id === p.id ? null : { id: p.id, name: p.name }"
+            >
+              <Avatar :name="p.name" :size="18" :ring="false" />{{ p.name }}
+            </button>
+          </div>
         </div>
         <div>
           <label class="flabel">标签(点击切换)</label>

@@ -50,7 +50,7 @@ create table if not exists public.memories (
   created_at timestamptz not null default now()
 );
 
--- 食宿安排(type: stay=住宿 / food=餐饮)
+-- 食宿安排(type: stay=住宿 / food=餐饮;assignee=负责人)
 create table if not exists public.stays (
   id         uuid primary key default gen_random_uuid(),
   plan_id    uuid not null references public.plans(id) on delete cascade,
@@ -60,8 +60,11 @@ create table if not exists public.stays (
   phone      text not null default '',
   tags       jsonb not null default '[]'::jsonb,      -- ["已预订","人均¥100"]
   booked     boolean not null default false,
+  assignee   jsonb,                                   -- 负责成员 {id,name}
+  day        smallint,                                -- 第几天(1=出发日),食宿按天分组
   created_at timestamptz not null default now()
 );
+alter table public.stays add column if not exists assignee jsonb;`r`nalter table public.stays add column if not exists day smallint;
 
 -- TODO 清单(assignee = 指派给谁,分工用)
 create table if not exists public.todos (
@@ -71,9 +74,10 @@ create table if not exists public.todos (
   done       boolean not null default false,
   due        date,                                    -- 截止日期,可为空
   assignee   jsonb,                                   -- 负责人 {id,name}
+  day        smallint,                                -- 第几天(1=出发日),待办按天分组
   created_at timestamptz not null default now()
 );
-alter table public.todos add column if not exists assignee jsonb;
+alter table public.todos add column if not exists assignee jsonb;`r`nalter table public.todos add column if not exists day smallint;
 
 -- 收藏攻略
 create table if not exists public.guides (

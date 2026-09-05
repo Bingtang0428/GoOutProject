@@ -457,7 +457,7 @@ export const useContentStore = defineStore('content', () => {
   function addStay(planId, payload) {
     return remoteWrite(planId, 'stays', 'stays', {
       id: uid('stay'), plan_id: planId, type: 'stay',
-      name: '', address: '', phone: '', tags: [], booked: false, ...payload
+      name: '', address: '', phone: '', tags: [], booked: false, day: null, assignee: null, ...payload
     })
   }
 
@@ -471,7 +471,8 @@ export const useContentStore = defineStore('content', () => {
 
   function addTodo(planId, payload) {
     return remoteWrite(planId, 'todos', 'todos', {
-      id: uid('todo'), plan_id: planId, title: '', done: false, due: null, ...payload
+      id: uid('todo'), plan_id: planId, title: '', done: false, due: null,
+      day: null, assignee: null, ...payload
     })
   }
 
@@ -486,6 +487,11 @@ export const useContentStore = defineStore('content', () => {
   /** 指派负责人(分工):p = {id,name} | null 清除 */
   function setTodoAssignee(planId, id, p) {
     return remoteUpdate(planId, 'todos', 'todos', id, { assignee: p })
+  }
+
+  /** 设置/清除某天的待办归属(day: 1..N | null) */
+  function setTodoDay(planId, id, day) {
+    return remoteUpdate(planId, 'todos', 'todos', id, { day })
   }
 
   function removeTodo(planId, id) {
@@ -738,6 +744,7 @@ export const useContentStore = defineStore('content', () => {
     setTodoDone,
     setTodoDue,
     setTodoAssignee,
+    setTodoDay,
     removeTodo,
     addGuide,
     removeGuide,
