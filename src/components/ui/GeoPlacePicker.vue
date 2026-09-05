@@ -18,7 +18,37 @@ const q = ref(props.modelValue?.name || '')
 const results = ref([])
 const open = ref(false)
 const searching = ref(false)
+const shareState = ref('') // '', 'loading', 'ok:<名>', 'err:<原因>'
 let timer = null
+let shareTimer = null
+
+function isAmapShare(text) {
+  return /https?:\/\/[a-z0-9.-]*(surl\.amap|uri\.amap|www\.amap|map\.amap)[^ ]*/i.test(text)
+}
+
+/** 解析高德分享链接(surl/uri/place),成功后直接选点 */
+async function parseShareLink(text) {
+  if (!isAmapShare(text)) return
+  shareState.value = 'loading'
+  try {
+    const u = new URL('/api/parse-share', window.location.origin)
+    u.searchParams.set('url', text)
+    const res = await fetch(u.toString())
+    const j = await res.json()
+    if (j?.ok && j.lat != null) {
+      q.value = j.name || '分享位置'
+      open.value = false
+      shareState.value = `ok:${j.label || j.name}`
+      emit('update:modelValue', { name: j.name || '分享位置', label: j.label || q.value, lat: j.lat, lng: j.lng, source: 'share' })
+    } else {
+      shareState.value = 'err:无法解析该分享链接,请改用文字搜索'
+    }
+  } catch {
+    shareState.value = 'err:解析服务不可用,请改用文字搜索'
+  } finally {
+    if (shareState.value.startsWith('loading')) shareState.value = ''
+  }
+}
 
 watch(
   () => props.modelValue?.name,
@@ -30,7 +60,14 @@ watch(
 function onInput() {
   open.value = true
   clearTimeout(timer)
+  clearTimeout(shareTimer)
   const kw = q.value.trim()
+  if (isAmapShare(kw)) {
+    shareState.value = 'loading'
+    shareTimer = setTimeout(() => parseShareLink(kw), 800)
+    return
+  }
+  shareState.value = ''
   if (kw.length < 2) {
     results.value = []
     return
@@ -111,6 +148,18 @@ function onEnter() {
       </span>
     </div>
 
+    <!-- 分享链接解析状态 -->
+    <p
+      v-if="shareState"
+      class="mt-1.5 flex items-center gap-1.5 text-[12px]"
+      :class="shareState === 'loading' ? 'text-muted' : shareState.startsWith('ok:') ? 'text-[#16a34a]' : 'text-rose'"
+    >
+      <i v-if="shareState === 'loading'" class="fa-solid fa-circle-notch" style="animation: spin 0.8s linear infinite" aria-hidden="true"></i>
+      <i v-else-if="shareState.startsWith('ok:')" class="fa-solid fa-circle-check" aria-hidden="true"></i>
+      <i v-else class="fa-solid fa-circle-exclamation" aria-hidden="true"></i>
+      {{ shareState === 'loading' ? '正在解析高德分享链接…' : shareState.startsWith('ok:') ? `已解析:${shareState.slice(3)}` : shareState.slice(4) }}
+    </p>
+
     <!-- 候选列表 -->
     <Transition name="fade-up">
       <div v-if="open && q.trim().length >= 2" class="card absolute left-0 right-0 top-[calc(100%+6px)] z-40 max-h-64 overflow-y-auto p-1.5 shadow-pop">
@@ -145,8 +194,9 @@ function onEnter() {
       </div>
     </Transition>
 
-    <p v-if="!hasSel" class="muted mt-1 flex items-center gap-1.5 text-[11px]">
-      <i class="fa-solid fa-circle-info" aria-hidden="true"></i>从候选列表点选更准;也可以<a :href="amapFixUrl" target="_blank" rel="noopener" class="font-semibold text-primary hover:underline">在高德确认后回来填</a>
+    <p v-if="!hasSel && !shareState.startsWith('ok:')" class="muted mt-1 flex flex-wrap items-center gap-1.5 text-[11px]">
+      <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
+      <span>直接粘贴 <b class="font-semibold text-primary">高德分享链接</b>(surl/uri)可自动定位,或从候选列表点选更准;也可以<a :href="amapFixUrl" target="_blank" rel="noopener" class="font-semibold text-primary hover:underline">在高德确认后回来填</a></span>
     </p>
   </div>
 </template>
