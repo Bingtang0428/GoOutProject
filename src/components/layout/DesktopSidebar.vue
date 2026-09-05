@@ -174,7 +174,17 @@ function logout() {
           <p class="text-[11px] text-muted">正在计划下一程</p>
         </div>
       </div>
-      <BaseButton variant="plain" size="sm" icon="fa-right-from-bracket" @click="logout" />
+      <div class="flex items-center gap-1">
+        <BaseButton
+          v-if="auth.isAdmin"
+          variant="soft"
+          size="sm"
+          icon="fa-shield-halved"
+          title="后台管理"
+          @click="router.push('/admin')"
+        />
+        <BaseButton variant="plain" size="sm" icon="fa-right-from-bracket" @click="logout" />
+      </div>
     </div>
   </aside>
 </template>

@@ -27,6 +27,12 @@ const router = createRouter({
       component: () => import('@/views/LoginView.vue'),
       meta: { public: true }
     },
+    {
+      path: '/admin',
+      name: 'admin',
+      component: () => import('@/views/AdminView.vue'),
+      meta: { admin: true }
+    },
     { path: '/:pathMatch(.*)*', redirect: '/' }
   ]
 })
@@ -37,6 +43,10 @@ router.beforeEach((to) => {
     return { name: 'login', query: { redirect: to.fullPath } }
   }
   if (to.name === 'login' && auth.isLoggedIn) {
+    return { name: 'home' }
+  }
+  // 后台仅管理员可进
+  if (to.meta.admin && !auth.isAdmin) {
     return { name: 'home' }
   }
   return true

@@ -96,7 +96,29 @@ create table if not exists public.bills (
   created_at  timestamptz not null default now()
 );
 
--- 行程建议评论:挂在某个目的地(dest)上,状态闭环 open→accepted→done
+-- 邀请码登录(替代邮箱注册):一次性码,扫码/输入即可加入
+create table if not exists public.invite_codes (
+  id          uuid primary key default gen_random_uuid(),
+  code        text not null unique,              -- 一次性邀请码(可含字母数字 -)
+  role        text not null default 'member'
+              check (role in ('admin','member','viewer')),
+  plan_id     uuid references public.plans(id) on delete cascade, -- 成员/围观码必须绑定计划
+  label       text not null default '',          -- 用途备注,如 “接待民宿老板”
+  created_by  jsonb,                             -- 谁生成的
+  created_at  timestamptz not null default now(),
+  used_by     jsonb,                             -- 谁用了 {id,name}
+  used_at     timestamptz,
+  revoked     boolean not null default false
+);
+
+-- 初始管理员码(请登录后台后尽快在「邀请码管理」里撤销并重新生成)
+insert into public.invite_codes (code, role, label)
+select 'TT-ADMIN-2026', 'admin', '内置管理员(首次登录后请撤销)'
+where not exists (select 1 from public.invite_codes where role = 'admin');
+
+create index if not exists idx_invite_codes_plan on public.invite_codes(plan_id);
+
+
 create table if not exists public.comments (
   id           uuid primary key default gen_random_uuid(),
   plan_id      uuid not null references public.plans(id) on delete cascade,
@@ -178,11 +200,12 @@ alter table public.comments   enable row level security;
 alter table public.transits   enable row level security;
 alter table public.vehicles   enable row level security;
 alter table public.fuel_logs  enable row level security;
+alter table public.invite_codes enable row level security;
 
 do $$
 declare t text;
 begin
-  foreach t in array array['plans','route_days','stays','todos','guides','reminders','bills','comments','transits','vehicles','fuel_logs'] loop
+  foreach t in array array['plans','route_days','stays','todos','guides','reminders','bills','comments','transits','vehicles','fuel_logs','invite_codes'] loop
     execute format('drop policy if exists "%s_all" on public.%I', t, t);
     execute format('create policy "%s_all" on public.%I for all using (true) with check (true)', t, t);
   end loop;

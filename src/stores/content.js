@@ -52,6 +52,16 @@ export const useContentStore = defineStore('content', () => {
   // planId -> { days[], stays[], todos[], guides[], reminders[] }
   const rows = reactive({})
   const channels = {}
+  const pollTimers = {} // 实时通道不可用时的兜底轮询
+
+  async function pollRemote(planId) {
+    // 网络不允许 WebSocket(实时通道 CLOSED)时,退化为周期性拉取,
+    // 保证「他人改动 / 本机刷新」能自愈同步
+    for (const [key, table] of Object.entries(TABLES)) {
+      const { data, error } = await supabase.from(table).select('*').eq('plan_id', planId)
+      if (!error && data && rows[planId]) rows[planId][key] = data
+    }
+  }
 
   function ensureBucket(planId) {
     if (!rows[planId]) rows[planId] = EMPTY()
@@ -93,12 +103,17 @@ export const useContentStore = defineStore('content', () => {
       await persistLocal(planId, key, (l) => l.unshift(row))
       return row
     }
+    // ★ 先乐观写入本地(界面立即出现,不等网络/实时通道),失败再回退
+    const bucket = ensureBucket(planId)
+    const optimisticId = row.id
+    applyById(planId, key, row)
     const { data, error } = await supabase.from(table).insert(row).select().single()
     if (error) {
+      bucket[key] = bucket[key].filter((r) => r.id !== optimisticId) // 回滚乐观行
       console.warn(`[content] 写入 ${table} 失败:`, error.message)
       throw error
     }
-    applyById(planId, key, data) // 乐观行已被远端行覆盖
+    applyById(planId, key, data) // 以服务端行(含默认值)为准
     return data
   }
 
@@ -189,7 +204,15 @@ export const useContentStore = defineStore('content', () => {
       )
     }
     ch.subscribe((status) => {
-      if (status !== 'SUBSCRIBED') console.warn('[content] 实时订阅未连接:', status)
+      if (status !== 'SUBSCRIBED') {
+        console.warn('[content] 实时订阅未连接:', status, '→ 已启用 20s 轮询兜底')
+        if (!pollTimers[planId]) {
+          pollTimers[planId] = setInterval(() => pollRemote(planId), 20000)
+        }
+      } else if (pollTimers[planId]) {
+        clearInterval(pollTimers[planId])
+        delete pollTimers[planId]
+      }
     })
     channels[planId] = ch
   }
@@ -200,6 +223,10 @@ export const useContentStore = defineStore('content', () => {
     if (ch && supabase) {
       supabase.removeChannel(ch)
       delete channels[planId]
+    }
+    if (pollTimers[planId]) {
+      clearInterval(pollTimers[planId])
+      delete pollTimers[planId]
     }
   }
 

@@ -172,8 +172,15 @@ export const usePlansStore = defineStore('plans', () => {
       localDb.savePlans(list)
       if (idx !== -1) plans.value[idx] = { ...plans.value[idx], ...payload }
     } else {
+      // ★ 乐观更新:界面立即生效;失败回滚
+      const before = idx !== -1 ? { ...plans.value[idx] } : null
+      if (idx !== -1) plans.value[idx] = { ...plans.value[idx], ...payload }
       const { error } = await supabase.from('plans').update(payload).eq('id', id)
-      if (error) console.warn('[plans] 更新失败', error.message)
+      if (error) {
+        if (idx !== -1 && before) plans.value[idx] = before
+        console.warn('[plans] 更新失败', error.message)
+        throw error
+      }
     }
   }
 

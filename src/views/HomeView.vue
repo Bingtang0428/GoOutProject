@@ -244,6 +244,14 @@ async function purgeOne(entry) {
           </div>
           <div class="flex items-center gap-2">
             <button
+              v-if="auth.isAdmin"
+              class="btn btn-ghost btn-sm !rounded-[12px] !px-4 !py-3"
+              title="后台管理"
+              @click="router.push('/admin')"
+            >
+              <i class="fa-solid fa-shield-halved" aria-hidden="true"></i>后台
+            </button>
+            <button
               v-if="!isSupabase && plansStore.trash.length"
               class="icon-btn relative !h-10 !w-10 !rounded-[12px] bg-surface-2"
               title="回收站"
