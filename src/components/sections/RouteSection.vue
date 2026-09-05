@@ -53,10 +53,15 @@ async function getL() {
   return Lmod
 }
 
-/* 底图源:优先高德中文瓦片(国内地名全中文);异常自动回退 CARTO / Esri */
+/* 底图源:优先多组高德中文瓦片(限流自动换同源域名);最后才是国外兜底 */
 const TILE_PROVIDERS = [
   {
     url: 'https://webrd0{s}.is.autonavi.com/appmaptile?style=7&x={x}&y={y}&z={z}&lang=zh_cn&size=1&scale=1',
+    subdomains: ['1', '2', '3', '4'],
+    attribution: '&copy; <a href="https://www.amap.com/">高德地图</a>'
+  },
+  {
+    url: 'https://wprd0{s}.is.autonavi.com/appmaptile?style=7&x={x}&y={y}&z={z}&lang=zh_cn&size=1&scl=1',
     subdomains: ['1', '2', '3', '4'],
     attribution: '&copy; <a href="https://www.amap.com/">高德地图</a>'
   },
