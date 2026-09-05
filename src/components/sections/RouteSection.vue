@@ -217,6 +217,30 @@ function scheduleAutoDurations() {
   }, 900)
 }
 
+/* ---------------- 换手 / 司机安排 ---------------- */
+const participants = computed(() => (props.plan.members || []).slice())
+
+async function setDriver(day, dest, person) {
+  await store.updateDestinationFields(props.plan.id, day.date, dest.id, {
+    driver: person ? { id: person.id, name: person.name } : null
+  })
+}
+
+/** 当日累计自驾分钟 ≥240(约 4 小时)时建议换手/休息 */
+function handoverFor(destId) {
+  for (const day of days.value) {
+    let acc = 0
+    for (const x of day.destinations || []) {
+      acc += Number(x.drive_min) || 0
+      if (x.id === destId) {
+        if (!x.drive_min) return false
+        return acc >= 240
+      }
+    }
+  }
+  return false
+}
+
 const escapeHtml = (s = '') =>
   String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
 
@@ -687,6 +711,41 @@ watch(
                         <span><i class="fa-solid fa-bus-simple text-[10px]" aria-hidden="true"></i> 公交约 {{ fmtMinute(d.transit_min) }}</span>
                       </template>
                     </p>
+                    <!-- 换手 / 司机安排 -->
+                    <div class="mt-1.5 flex flex-wrap items-center gap-1.5">
+                      <i
+                        class="fa-solid fa-arrows-rotate text-[10px]"
+                        :class="handoverFor(d.id) ? 'text-amber' : 'text-primary/40'"
+                        aria-hidden="true"
+                      ></i>
+                      <template v-if="canEdit && participants.length">
+                        <button
+                          v-for="p in participants"
+                          :key="p.id"
+                          type="button"
+                          class="chip !px-1.5 !py-0.5 transition-all duration-150 active:scale-90"
+                          :class="d.driver?.id === p.id ? 'chip-brand' : 'chip-plain opacity-70'"
+                          :title="d.driver?.id === p.id ? `取消 ${p.name} 负责此段` : `${p.name} 负责此段`"
+                          @click="setDriver(day, d, d.driver?.id === p.id ? null : p)"
+                        >
+                          <Avatar :name="p.name" :size="16" :ring="false" />
+                          {{ p.name }}
+                        </button>
+                        <span v-if="d.driver" class="chip chip-success !py-0.5 !text-[11px]">
+                          <i class="fa-solid fa-check" aria-hidden="true"></i>{{ d.driver.name }} 开此段
+                        </span>
+                      </template>
+                      <span v-else-if="d.driver" class="text-[11.5px] text-muted">
+                        <i class="fa-solid fa-user mr-1" aria-hidden="true"></i>司机:{{ d.driver.name }}
+                      </span>
+                      <span
+                        v-if="handoverFor(d.id)"
+                        class="chip chip-amber !py-0.5 !text-[11px]"
+                        title="累计驾驶已超 4 小时,建议换手或休息 15 分钟"
+                      >
+                        <span class="dot"></span>连续驾驶 ≥4h · 建议换手/休息
+                      </span>
+                    </div>
                   </div>
                   <div class="col-span-2 flex items-center gap-1 pt-1 pl-[76px] sm:col-span-1 sm:pl-0 sm:pt-0">
                     <button

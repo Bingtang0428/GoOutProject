@@ -32,17 +32,22 @@ const people = computed(() => {
 })
 
 /* ---------- 车辆信息 ---------- */
-const vehForm = reactive({ name: '', plate: '' })
+const vehForm = reactive({ name: '', plate: '', capacity: '', cons: '' })
 
 function editVehicle() {
   vehForm.name = vehicle.value?.name || ''
   vehForm.plate = vehicle.value?.plate || ''
+  vehForm.capacity = vehicle.value?.capacity_l ? String(vehicle.value.capacity_l) : ''
+  vehForm.cons = vehicle.value?.cons_l100 ? String(vehicle.value.cons_l100) : ''
 }
 
 async function saveVehicle() {
+  const num = (v) => (v === '' || v == null ? null : Number(v))
   await store.saveVehicle(props.plan.id, {
     name: vehForm.name.trim(),
-    plate: vehForm.plate.trim()
+    plate: vehForm.plate.trim(),
+    capacity_l: num(vehForm.capacity) > 0 ? num(vehForm.capacity) : null,
+    cons_l100: num(vehForm.cons) > 0 ? num(vehForm.cons) : null
   })
 }
 
@@ -72,6 +77,53 @@ const stats = computed(() => {
     avgLiters,
     costPerKm: km > 0 ? totalCost / km : null
   }
+})
+
+/* ---------- 加油/续航智能建议 ----------
+ * 依据:路线中标注的自驾分钟 × 均速 65km/h ≈ 里程;
+ * 油耗:优先用车速表填写的百公里油耗,否则用里程表自动测算的均值。
+ */
+const ADV_AVG_KMH = 65
+
+const fuelAdvice = computed(() => {
+  const minutes = store
+    .rowsOf(props.plan.id, 'days')
+    .reduce((sum, d) => sum + (d.destinations || []).reduce((s, x) => s + (Number(x.drive_min) || 0), 0), 0)
+  const daysList = store
+    .rowsOf(props.plan.id, 'days')
+    .map((d) => (d.destinations || []).reduce((s, x) => s + (Number(x.drive_min) || 0), 0))
+  const avgLiters = Number(vehicle.value?.cons_l100) || stats.value.avgLiters || 9
+  const capacity = Number(vehicle.value?.capacity_l) || 50
+  const km = (minutes / 60) * ADV_AVG_KMH
+  const need = (km * avgLiters) / 100
+  const rangeKm = (capacity * 100) / avgLiters
+  const usable = capacity * 0.85 // 不建议烧干油箱
+  const stops = need > 0 ? Math.max(0, Math.ceil(need / usable) - 1) : 0
+  const longestDayKm = ((Math.max(0, ...daysList) / 60) * ADV_AVG_KMH)
+  const oneDayOk = longestDayKm <= rangeKm
+
+  const tips = []
+  if (!minutes) {
+    tips.push('先在「路线」里为各段点「自动算时长」,这里就能给出加油建议。')
+    return { km: 0, need: 0, stops: 0, oneDayOk: true, tips }
+  }
+  if (stops > 0) {
+    tips.push(`全程约 ${Math.round(km)} km,预计耗油约 ${Math.round(need)} L —— 建议沿途安排约 ${stops} 次加油。`)
+  } else {
+    tips.push(`全程约 ${Math.round(km)} km,一箱油(按 ${capacity} L)基本够用,出发前加满即可。`)
+  }
+  if (!oneDayOk) {
+    tips.push(`最长单日行驶约 ${Math.round(longestDayKm)} km,超出满箱续航,那天中途记得补油。`)
+  } else {
+    tips.push(`满箱续航约 ${Math.round(rangeKm)} km,最长单日 ${Math.round(longestDayKm)} km,单日无忧。`)
+  }
+  if (!vehicle.value?.cons_l100) {
+    tips.push(`油耗未手填,按记录测算 ${stats.value.avgLiters ? stats.value.avgLiters.toFixed(1) : '默认 9'} L/100km 估算。`)
+  }
+  if (!vehicle.value?.capacity_l) {
+    tips.push(`油箱容积未填,按常见 ${capacity} L 估算;填准后建议更准确。`)
+  }
+  return { km, need, stops, oneDayOk, tips }
 })
 
 /* ---------- 加油记录 ---------- */
@@ -155,8 +207,32 @@ async function saveFuel() {
         <div v-if="canEdit" class="flex flex-wrap items-center gap-2">
           <input v-model="vehForm.name" class="field !w-40 !py-1.5 !text-[13px]" placeholder="爱车昵称" @focus="editVehicle" />
           <input v-model="vehForm.plate" class="field !w-32 !py-1.5 !text-[13px]" placeholder="车牌号" @focus="editVehicle" />
+          <input
+            v-model="vehForm.capacity"
+            type="number"
+            min="0"
+            class="field !w-24 !py-1.5 !text-[13px]"
+            placeholder="油箱L"
+            title="油箱容积(用于续航建议)"
+            @focus="editVehicle"
+          />
+          <input
+            v-model="vehForm.cons"
+            type="number"
+            min="0"
+            step="0.1"
+            class="field !w-24 !py-1.5 !text-[13px]"
+            placeholder="油耗L/100km"
+            title="百公里油耗(留空则按记录自动测算)"
+            @focus="editVehicle"
+          />
           <BaseButton size="sm" icon="fa-check" @click="saveVehicle">保存</BaseButton>
         </div>
+        <p v-else class="muted text-[12px]">
+          {{ vehicle?.plate || '未填车牌号' }}
+          <template v-if="vehicle?.capacity_l"> · 油箱 {{ vehicle.capacity_l }} L</template>
+          <template v-if="vehicle?.cons_l100"> · {{ vehicle.cons_l100 }} L/100km</template>
+        </p>
       </div>
     </div>
 
@@ -182,6 +258,30 @@ async function saveFuel() {
         <p class="mt-1 text-[19px] font-bold text-ink">{{ stats.avgLiters ? stats.avgLiters.toFixed(1) : '--' }} <span class="text-[13px]">L</span></p>
         <p class="text-[11.5px] text-muted">每公里成本 {{ stats.costPerKm ? '¥' + stats.costPerKm.toFixed(2) : '--' }}</p>
       </div>
+    </div>
+
+    <!-- 加油/续航智能建议 -->
+    <div class="card p-5">
+      <p class="title-2 mb-3 flex items-center gap-2">
+        <i class="fa-solid fa-gauge-high text-primary" aria-hidden="true"></i>
+        加油 / 续航建议
+        <span v-if="fuelAdvice.km > 0" class="chip chip-plain !text-[11px]">
+          <i class="fa-solid fa-route mr-1 text-primary/70" aria-hidden="true"></i>全程约 {{ Math.round(fuelAdvice.km) }} km
+        </span>
+        <span v-if="fuelAdvice.stops > 0" class="chip chip-amber !text-[11px]">
+          <span class="dot"></span>建议加油 {{ fuelAdvice.stops }} 次
+        </span>
+      </p>
+      <ul class="space-y-2 text-[13px] leading-relaxed text-ink-soft">
+        <li v-for="(t, i) in fuelAdvice.tips" :key="i" class="flex items-start gap-2">
+          <i
+            class="fa-solid mt-1 text-[10px]"
+            :class="t.includes('加满') || t.includes('无忧') ? 'fa-circle-check text-[#16a34a]' : t.includes('建议加油') || t.includes('补油') ? 'fa-circle-exclamation text-amber' : 'fa-circle-info text-primary/60'"
+            aria-hidden="true"
+          ></i>
+          <span>{{ t }}</span>
+        </li>
+      </ul>
     </div>
 
     <!-- 记录列表 -->

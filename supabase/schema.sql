@@ -287,8 +287,12 @@ create table if not exists public.vehicles (
   plan_id     uuid not null references public.plans(id) on delete cascade,
   name        text not null default '',           -- 爱车昵称
   plate       text not null default '',           -- 车牌
+  capacity_l  numeric(6,2),                       -- 油箱容积 L(续航建议用)
+  cons_l100   numeric(6,2),                       -- 百公里油耗 L(可覆盖自动测算)
   created_at  timestamptz not null default now()
 );
+alter table public.vehicles add column if not exists capacity_l numeric(6,2);
+alter table public.vehicles add column if not exists cons_l100 numeric(6,2);
 
 -- 加油/里程记录(油耗按相邻记录里程差计算)
 create table if not exists public.fuel_logs (

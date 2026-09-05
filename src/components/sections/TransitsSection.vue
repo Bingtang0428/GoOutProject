@@ -74,6 +74,25 @@ function personStatus(p) {
   return cars.length ? '自驾,可与其他队员拼车' : '需大交通到达'
 }
 
+/* ---------- 接驳任务自动闭环 ---------- */
+function pickupTodo(t) {
+  const todos = store.rowsOf(props.plan.id, 'todos')
+  const key = `[接站] 接 ${t.person?.name || ''}`
+  return todos.find((x) => x.title.startsWith(key)) || null
+}
+
+/** 为一段"到达"生成接站待办(截止当天),勾选完成即闭环 */
+async function createPickup(t) {
+  if (pickupTodo(t)) return
+  const suffix = []
+  if (t.ref_no) suffix.push(t.ref_no)
+  if (t.from_city && t.to_city) suffix.push(`${t.from_city} → ${t.to_city}`)
+  await store.addTodo(props.plan.id, {
+    title: `[接站] 接 ${t.person?.name || ''}${suffix.length ? '(' + suffix.join(' ') + ')' : ''}`,
+    due: t.leg_date || null
+  })
+}
+
 /* ---------- 编辑弹窗 ---------- */
 const showForm = ref(false)
 const editing = ref(null) // 编辑的 transit | null 新增
@@ -227,6 +246,23 @@ const DIR_META = {
                 <button class="icon-btn !h-6 !w-6" title="编辑" @click="openEdit(leg)"><i class="fa-solid fa-pen text-[10px]" aria-hidden="true"></i></button>
                 <button class="icon-btn icon-btn-danger !h-6 !w-6" title="删除" @click="store.removeTransit(plan.id, leg.id)"><i class="fa-solid fa-xmark text-[10px]" aria-hidden="true"></i></button>
               </div>
+            </div>
+            <!-- 接驳任务自动闭环:非自驾到达可生成接站待办 -->
+            <div v-if="canEdit && leg.mode !== 'car'" class="mt-1 flex items-center gap-2 px-2">
+              <span
+                v-if="pickupTodo(leg)"
+                class="chip chip-success !text-[11px]"
+              >
+                <i class="fa-solid fa-circle-check" aria-hidden="true"></i>
+                已生成接站任务{{ pickupTodo(leg).done ? ' · 已完成' : '' }}
+              </span>
+              <button
+                v-else
+                class="chip chip-brand cursor-pointer !text-[11px] transition-all duration-150 active:scale-95"
+                @click="createPickup(leg)"
+              >
+                <i class="fa-solid fa-hands-holding-child" aria-hidden="true"></i>生成接站任务
+              </button>
             </div>
           </div>
 
