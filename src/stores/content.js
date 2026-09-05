@@ -342,7 +342,9 @@ export const useContentStore = defineStore('content', () => {
         else console.warn(`[content] 拉取 ${table} 失败:`, error?.message)
       })
       await Promise.all(selects)
-      subscribeRemote(planId)
+      // 纯轮询同步模式(不创建 WebSocket 通道,避免网络噪音)
+      channels[planId] = 'poll'
+      startPoll(planId)
     }
     await ensureDayRows(plan)
     rows[planId]._loading = false

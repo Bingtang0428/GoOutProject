@@ -55,20 +55,9 @@ export const usePlansStore = defineStore('plans', () => {
       if (!isSupabase) {
         plans.value = ensureLocal()
       } else {
-        // Supabase:订阅 plans 表实时变更 + 首次拉取
+        // Supabase:首次拉取 + 计划级纯轮询同步(每 60s),不建 WebSocket
         const { data, error } = await supabase.from('plans').select('*').order('created_at', { ascending: false })
         if (!error) plans.value = (data || []).map(normalize)
-        const ch = supabase
-          .channel('plans-list')
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'plans' }, (payload) => applyRemote(payload))
-          .subscribe((status) => {
-            // 实时不可用时不重连轰炸;计划列表在每次进入页面时都会重新拉取
-            if (status && status !== 'SUBSCRIBED' && ch) {
-              supabase.removeChannel(ch).catch(() => {})
-            }
-          })
-        window.addEventListener('beforeunload', () => supabase.removeChannel(ch))
-        // 计划级纯轮询同步(每 60s),即使实时不可用也能收敛到最新
         window.setInterval(async () => {
           const { data: again } = await supabase.from('plans').select('*').order('created_at', { ascending: false })
           if (again) plans.value = again.map(normalize)
