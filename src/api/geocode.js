@@ -31,6 +31,18 @@ function proxyUrl(type, q, hint) {
   return u.toString()
 }
 
+/** 高德(GCJ-02)→ WGS84(迭代反解),入库/画图/算路统一用 WGS84 */
+export function gcj2wgs(lat, lng) {
+  let wLat = lat
+  let wLng = lng
+  for (let i = 0; i < 4; i++) {
+    const g = wgs2gcj(wLat, wLng)
+    wLat += lat - g.lat
+    wLng += lng - g.lng
+  }
+  return { lat: wLat, lng: wLng }
+}
+
 /**
  * 精确选点(高德 POI):返回候选列表,失败返回 []
  * @param {string} raw
@@ -43,7 +55,14 @@ export async function searchPlaces(raw, hint = '') {
   try {
     const res = await fetch(proxyUrl('place', q, hint))
     const j = await res.json()
-    return j?.ok && Array.isArray(j.candidates) ? j.candidates.slice(0, 8) : []
+    if (j?.ok && Array.isArray(j.candidates)) {
+      // 高德坐标为 GCJ-02 → 统一转 WGS84 后返回
+      return j.candidates.map((c) => {
+        const w = gcj2wgs(c.lat, c.lng)
+        return { ...c, lat: w.lat, lng: w.lng }
+      }).slice(0, 8)
+    }
+    return []
   } catch {
     return []
   }
@@ -65,9 +84,9 @@ export async function geocodePlace(raw, opts = {}) {
     const res = await fetch(proxyUrl('geo', q, opts.hint || ''))
     const j = await res.json()
     if (j?.ok && j.location?.lat != null && j.location?.lng != null) {
-      const hit = { lat: j.location.lat, lng: j.location.lng }
-      cache.set(key, hit)
-      return hit
+      const w = gcj2wgs(j.location.lat, j.location.lng)
+      cache.set(key, w)
+      return w
     }
     cache.set(key, null)
     return null
@@ -125,3 +144,4 @@ function wgs2gcj(lat, lng) {
   dLng = (dLng * 180) / ((A / sqrtMagic) * Math.cos(radLat) * PI)
   return { lat: lat + dLat, lng: lng + dLng }
 }
+export { wgs2gcj }

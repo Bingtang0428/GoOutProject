@@ -12,7 +12,7 @@ import { useContentStore } from '@/stores/content'
 import { useAuthStore } from '@/stores/auth'
 import { fmtDay, dayIndex, eachDayISO, parseISO } from '@/utils/date'
 import { uid, PASTEL_GRADS } from '@/utils/misc'
-import { geocodePlace, navUrl } from '@/api/geocode'
+import { geocodePlace, navUrl, wgs2gcj } from '@/api/geocode'
 import { fetchDailyWeather, wxMeta, wxTempText } from '@/api/weather'
 import { drivingLeg, transitMinutes, fmtMinute } from '@/api/route'
 import BaseModal from '@/components/ui/BaseModal.vue'
@@ -76,14 +76,18 @@ const TILE_PROVIDERS = [
 ]
 const mapStatus = ref('') // 底图/加载状态提示
 let tileFailTimer = null
+let mapInAmap = true // 当前底图是否为高德(GCJ 投影):决定绘制前坐标转换
+let tileIdx = 0
 
 function switchTile(L, failMsg = true) {
-  if (!map || !L || !TILE_PROVIDERS.length) return
-  const next = TILE_PROVIDERS.shift()
+  if (!map || !L) return
+  const next = TILE_PROVIDERS[tileIdx]
   if (!next) {
     mapStatus.value = '底图加载失败,请检查网络后重新打开地图'
     return
   }
+  tileIdx++
+  mapInAmap = /autonavi/i.test(next.url)
   const opts = { maxZoom: 19, attribution: next.attribution }
   if (next.subdomains) opts.subdomains = next.subdomains
   const layer = L.tileLayer(next.url, opts).addTo(map)
@@ -98,7 +102,7 @@ function switchTile(L, failMsg = true) {
   clearTimeout(tileFailTimer)
   tileFailTimer = setTimeout(() => {
     // 加载超时兜底:再换一个源
-    if (map && TILE_PROVIDERS.length) switchTile(L)
+    if (map && TILE_PROVIDERS[tileIdx]) switchTile(L)
   }, 9000)
 }
 
@@ -109,6 +113,8 @@ async function enterMap() {
   const L = await getL()
   mapStatus.value = '地图加载中…'
   map = L.map(mapEl.value, { zoomControl: true, attributionControl: true }).setView([30.9, 118.6], 8)
+  tileIdx = 0 // 每次打开地图都从高德中文开始
+  mapInAmap = true
   switchTile(L, false)
   routeLayer = L.layerGroup().addTo(map)
   await paintRoute()
@@ -278,13 +284,15 @@ async function paintRoute() {
   await drawSegments()
 }
 
-/** 只取已有坐标的目的地(含临时定位),供地图绘制 */
+/** 只取已有坐标的目的地(含临时定位),供地图绘制;
+ *  高德底图为 GCJ-02 投影,绘制前把 WGS84 库内坐标转 GCJ 对齐底图 */
 function visItems() {
   return flattenDests()
     .map((it) => {
       const e = effCoord(it.dest)
       if (!e) return null
-      return { ...it, dest: { ...it.dest, ...e } }
+      const draw = mapInAmap ? wgs2gcj(e.lat, e.lng) : e
+      return { ...it, dest: { ...it.dest, ...e, _wgs: { lat: e.lat, lng: e.lng }, lat: draw.lat, lng: draw.lng } }
     })
     .filter(Boolean)
 }
@@ -378,7 +386,7 @@ function addMarker(L, { di, day, dest }) {
        <div class="rt-pop-title">D${dayIndex(props.plan.start_date, day.date)} · ${escapeHtml(dest.place)}</div>
        <div class="rt-pop-sub">${escapeHtml(fmtDay(day.date))}${dest.time ? ' · ' + escapeHtml(dest.time) : ''}</div>
        ${dest.note ? `<div class="rt-pop-note">${escapeHtml(dest.note)}</div>` : ''}
-       <a class="rt-pop-link" target="_blank" rel="noopener" href="${escapeHtml(navUrl(dest.place, { lat: dest.lat, lng: dest.lng }))}">打开导航 ↗</a>
+       <a class="rt-pop-link" target="_blank" rel="noopener" href="${escapeHtml(navUrl(dest.place, dest._wgs || dest))}">打开导航 ↗</a>
      </div>`
   )
   L.marker([dest.lat, dest.lng], {

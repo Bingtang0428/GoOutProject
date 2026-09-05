@@ -5,7 +5,7 @@
 // modelValue: { name, lat, lng } | null
 // ============================================================
 import { ref, computed, watch } from 'vue'
-import { searchPlaces, cleanQuery } from '@/api/geocode'
+import { searchPlaces, gcj2wgs } from '@/api/geocode'
 
 const props = defineProps({
   modelValue: { type: Object, default: null },
@@ -36,10 +36,12 @@ async function parseShareLink(text) {
     const res = await fetch(u.toString())
     const j = await res.json()
     if (j?.ok && j.lat != null) {
+      // 高德短链坐标是 GCJ-02 → 转 WGS84 入库
+      const w = gcj2wgs(j.lat, j.lng)
       q.value = j.name || '分享位置'
       open.value = false
       shareState.value = `ok:${j.label || j.name}`
-      emit('update:modelValue', { name: j.name || '分享位置', label: j.label || q.value, lat: j.lat, lng: j.lng, source: 'share' })
+      emit('update:modelValue', { name: j.name || '分享位置', label: j.label || q.value, lat: w.lat, lng: w.lng, source: 'share' })
     } else {
       shareState.value = 'err:无法解析该分享链接,请改用文字搜索'
     }
