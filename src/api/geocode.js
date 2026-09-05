@@ -117,12 +117,29 @@ export function navUrl(place, wgs) {
 }
 
 /**
- * 精确选点:返回候选列表(带坐标/区县城市),供用户确认选择
- * hint=计划集合城市,用于消除同名歧义
+ * 精确选点:优先走本站服务端代理(高德中文 POI),失败回退 Photon(OSM)
+ * hint=计划集合城市,用于消歧
  */
 export async function searchPlaces(raw, hint = '') {
   const q = cleanQuery(raw)
   if (!q || q.length < 2) return []
+  // 1) 高德(服务端代理,中文地名/地址,无 CORS 问题)
+  try {
+    const u = new URL('/api/geocode', window.location.origin)
+    u.searchParams.set('q', q)
+    if (hint) u.searchParams.set('city', hint)
+    const res = await fetch(u.toString())
+    if (res.ok) {
+      const j = await res.json()
+      if (j.ok && j.candidates?.length) {
+        return j.candidates.slice(0, 8)
+      }
+    }
+  } catch {
+    /* fallback 下一源 */
+  }
+
+  // 2) Photon(OSM),lang=zh 尽量返回中文
   const tries = [q]
   if (hint) tries.push(`${hint} ${q}`)
   const out = []
@@ -132,6 +149,7 @@ export async function searchPlaces(raw, hint = '') {
       const u = new URL('https://photon.komoot.io/api/')
       u.searchParams.set('q', t)
       u.searchParams.set('limit', '6')
+      u.searchParams.set('lang', 'zh')
       const res = await fetch(u.toString())
       if (!res.ok) continue
       const j = await res.json()
@@ -143,7 +161,7 @@ export async function searchPlaces(raw, hint = '') {
         const label = region ? `${name} · ${region}` : name
         if (!name || seen.has(label)) continue
         seen.add(label)
-        out.push({ label, name, lat: g[1], lng: g[0] })
+        out.push({ name, label, lat: g[1], lng: g[0] })
       }
       if (out.length >= 4) break
     } catch {
