@@ -263,8 +263,8 @@ export const useContentStore = defineStore('content', () => {
   }
 
   /**
-   * 云端创建/补全某天的路线行 —— 幂等 upsert:
-   * 按 (plan_id, date) 唯一键合并,服务器已有该行时不再报 409
+   * 云端创建/补全某天的路线行 —— 幂等且不覆盖:
+   * 若服务端当天已存在(含内容),直接取回服务端行
    */
   async function upsertDayRow(planId, date) {
     if (!isSupabase) return null
@@ -272,7 +272,7 @@ export const useContentStore = defineStore('content', () => {
       .from('route_days')
       .upsert(
         { id: makeUuid(), plan_id: planId, date, title: '', destinations: [] },
-        { onConflict: 'plan_id,date' }
+        { onConflict: 'plan_id,date', ignoreDuplicates: true }
       )
       .select()
       .single()
@@ -281,14 +281,39 @@ export const useContentStore = defineStore('content', () => {
       return null
     }
     ensureBucket(planId)
-    applyById(planId, 'days', data) // 以服务端行(id/默认值)为准
+    applyById(planId, 'days', data) // 以服务端行为准(已存在则保留其内容)
     return data
   }
 
-  /** 依据计划日期范围补全缺失的每日占位行(演示/新计划初始都是空) */
+  /**
+   * 依据计划日期范围补全缺失的每日占位行。
+   * ★ 云端场景:先拉取服务端已有行(保留既有内容),只补真正缺失的日期,
+   *   绝不因本地缓存为空而覆盖已有路线内容。
+   */
   async function ensureDayRows(plan) {
     if (!plan || !plan.start_date || !plan.end_date) return
     const bucket = ensureBucket(plan.id)
+    if (isSupabase) {
+      // 服务端是唯一事实来源:按日期合并,缺失的保留本地(可能刚新增)
+      const { data, error } = await supabase
+        .from('route_days')
+        .select('id, plan_id, date, title, destinations')
+        .eq('plan_id', plan.id)
+        .order('date', { ascending: true })
+      if (!error && data) {
+        const serverMap = new Map(data.map((d) => [d.date, d]))
+        const merged = []
+        const seen = new Set()
+        for (const row of data) {
+          merged.push(row)
+          seen.add(row.date)
+        }
+        for (const local of bucket.days) {
+          if (!seen.has(local.date)) merged.push(local)
+        }
+        bucket.days = merged
+      }
+    }
     const have = new Set(bucket.days.map((d) => d.date))
     const missing = eachDayISO(plan.start_date, plan.end_date).filter((d) => !have.has(d))
     for (const date of missing) {
