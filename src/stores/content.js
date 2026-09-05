@@ -481,6 +481,11 @@ export const useContentStore = defineStore('content', () => {
     return remoteUpdate(planId, 'todos', 'todos', id, { due })
   }
 
+  /** 指派负责人(分工):p = {id,name} | null 清除 */
+  function setTodoAssignee(planId, id, p) {
+    return remoteUpdate(planId, 'todos', 'todos', id, { assignee: p })
+  }
+
   function removeTodo(planId, id) {
     return remoteDelete(planId, 'todos', 'todos', id)
   }
@@ -516,6 +521,7 @@ export const useContentStore = defineStore('content', () => {
     return remoteWrite(planId, 'bills', 'bills', {
       id: uid('bill'), plan_id: planId, name: '', amount: 0,
       category: 'other', paid_by: null, involves: [], link: null, note: '',
+      date: new Date().toISOString().slice(0, 10),
       ...payload, created_at: new Date().toISOString()
     })
   }
@@ -701,6 +707,7 @@ export const useContentStore = defineStore('content', () => {
     addTodo,
     setTodoDone,
     setTodoDue,
+    setTodoAssignee,
     removeTodo,
     addGuide,
     removeGuide,

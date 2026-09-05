@@ -50,15 +50,17 @@ create table if not exists public.stays (
   created_at timestamptz not null default now()
 );
 
--- TODO 清单
+-- TODO 清单(assignee = 指派给谁,分工用)
 create table if not exists public.todos (
   id         uuid primary key default gen_random_uuid(),
   plan_id    uuid not null references public.plans(id) on delete cascade,
   title      text not null,
   done       boolean not null default false,
   due        date,                                    -- 截止日期,可为空
+  assignee   jsonb,                                   -- 负责人 {id,name}
   created_at timestamptz not null default now()
 );
+alter table public.todos add column if not exists assignee jsonb;
 
 -- 收藏攻略
 create table if not exists public.guides (
@@ -92,9 +94,11 @@ create table if not exists public.bills (
   paid_by     jsonb,                              -- {id,name} 谁付的钱
   involves    jsonb not null default '[]'::jsonb, -- 参与分摊的人 [{id,name}]
   link        jsonb,                              -- 联动: {type:'stay'|'dest', id, name}
+  date        date not null default current_date, -- 花费发生日期(按日花费分析用)
   note        text not null default '',
   created_at  timestamptz not null default now()
 );
+alter table public.bills add column if not exists date date not null default current_date;
 
 -- 行程变更日志:谁在何时改了什么(多人协作留痕)
 create table if not exists public.plan_logs (

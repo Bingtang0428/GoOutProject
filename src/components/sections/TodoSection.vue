@@ -5,11 +5,13 @@
 // ============================================================
 import { ref, computed } from 'vue'
 import { useContentStore } from '@/stores/content'
+import { useAuthStore } from '@/stores/auth'
 import { relKey, fmtDay } from '@/utils/date'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseModal from '@/components/ui/BaseModal.vue'
 import BaseCheckbox from '@/components/ui/BaseCheckbox.vue'
 import BaseTag from '@/components/ui/BaseTag.vue'
+import Avatar from '@/components/ui/Avatar.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 
 const props = defineProps({
@@ -17,13 +19,24 @@ const props = defineProps({
   canEdit: { type: Boolean, default: true }
 })
 const store = useContentStore()
+const auth = useAuthStore()
 
 const todos = computed(() => store.rowsOf(props.plan.id, 'todos'))
-const filter = ref('all') // all | open | done
+const filter = ref('all') // all | open | done | mine
 const newTitle = ref('')
 const showAdd = ref(false)
 const newDue = ref('')
 const pickDueFor = ref(null) // 正在内联设置截止日期的任务 id
+const assignFor = ref(null) // 正在指派负责人的任务 id
+
+const participants = computed(() => (props.plan.members || []).slice())
+const me = computed(() => auth.user || {})
+
+/** 判断某任务是否属于我(按 id 或昵称) */
+const isMine = (t) => {
+  const a = t.assignee
+  return a && (a.id === me.value.id || a.name === me.value.name)
+}
 
 const filtered = computed(() => {
   const list = todos.value.slice()
@@ -33,6 +46,7 @@ const filtered = computed(() => {
   })
   if (filter.value === 'open') return list.filter((t) => !t.done)
   if (filter.value === 'done') return list.filter((t) => t.done)
+  if (filter.value === 'mine') return list.filter((t) => isMine(t))
   return list
 })
 
@@ -68,12 +82,14 @@ function dueText(due) {
 const FILTERS = [
   { key: 'all', label: '全部' },
   { key: 'open', label: '进行中' },
-  { key: 'done', label: '已完成' }
+  { key: 'done', label: '已完成' },
+  { key: 'mine', label: '我负责' }
 ]
 
 function countOf(key) {
   if (key === 'open') return todos.value.filter((t) => !t.done).length
   if (key === 'done') return doneCount.value
+  if (key === 'mine') return todos.value.filter((t) => isMine(t)).length
   return todos.value.length
 }
 </script>
@@ -110,7 +126,7 @@ function countOf(key) {
           <div
             v-for="t in filtered"
             :key="t.id"
-            class="card flex items-center gap-4 px-5 py-3.5 transition-all duration-280 ease-out hover:shadow-card-hover active:scale-[0.985]"
+            class="card flex flex-wrap items-center gap-x-4 gap-y-2 px-5 py-3.5 transition-all duration-280 ease-out hover:shadow-card-hover active:scale-[0.985]"
           >
             <BaseCheckbox
               :model-value="t.done"
@@ -123,6 +139,43 @@ function countOf(key) {
             >
               {{ t.title }}
             </span>
+
+            <!-- 负责人指派(分工):展开选择参与者 -->
+            <template v-if="canEdit && assignFor === t.id">
+              <div class="flex w-full flex-wrap items-center gap-1.5 pb-0.5 pl-[46px]">
+                <span class="muted text-[11.5px]">指派给:</span>
+                <button
+                  v-for="p in participants"
+                  :key="p.id"
+                  type="button"
+                  class="chip transition-all duration-150 active:scale-95"
+                  :class="t.assignee?.id === p.id ? 'chip-brand' : 'chip-plain opacity-70'"
+                  @click="store.setTodoAssignee(plan.id, t.id, t.assignee?.id === p.id ? null : { id: p.id, name: p.name }); assignFor = null"
+                >
+                  <Avatar :name="p.name" :size="18" :ring="false" />{{ p.name }}
+                </button>
+                <button
+                  v-if="t.assignee"
+                  class="chip chip-rose cursor-pointer !text-[11px]"
+                  @click="store.setTodoAssignee(plan.id, t.id, null); assignFor = null"
+                >
+                  <i class="fa-solid fa-xmark" aria-hidden="true"></i>取消指派
+                </button>
+                <button class="chip chip-plain cursor-pointer !text-[11px]" @click="assignFor = null">完成</button>
+              </div>
+            </template>
+            <button
+              v-else
+              type="button"
+              class="chip shrink-0 transition-all duration-150 active:scale-95"
+              :class="t.assignee ? 'chip-brand' : 'chip-plain'"
+              :title="canEdit ? '点击指派负责人' : '负责人'"
+              @click="canEdit ? (assignFor = t.id) : null"
+            >
+              <Avatar v-if="t.assignee" :name="t.assignee.name" :size="18" :ring="false" />
+              <i v-else class="fa-solid fa-user-plus text-[11px]" aria-hidden="true"></i>
+              {{ t.assignee?.name || (canEdit ? '指派' : '未指派') }}
+            </button>
 
             <!-- 截止日期标签:小圆点 + 文字;已到期 rose / 今天 amber -->
             <template v-if="canEdit && pickDueFor === t.id">

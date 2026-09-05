@@ -7,6 +7,7 @@ import { computed } from 'vue'
 import { useContentStore } from '@/stores/content'
 import { usePlansStore } from '@/stores/plans'
 import { money } from '@/utils/money'
+import { fmtDay } from '@/utils/date'
 
 const props = defineProps({
   plan: { type: Object, required: true }
@@ -39,6 +40,21 @@ const byCat = computed(() => {
   }
   return CATS.map((c) => ({ ...c, amount: map.get(c.key) || 0 })).filter((c) => c.amount > 0)
 })
+
+/** 按日花费(需要 bills.date):旅行中哪天花钱最多一目了然 */
+const byDay = computed(() => {
+  const map = new Map()
+  for (const b of bills.value) {
+    const d = b.date || new Date(b.created_at || Date.now()).toISOString().slice(0, 10)
+    const list = map.get(d) || { date: d, amount: 0, count: 0 }
+    list.amount += Number(b.amount || 0)
+    list.count++
+    map.set(d, list)
+  }
+  return [...map.values()].sort((a, b) => a.date.localeCompare(b.date))
+})
+const dayMax = computed(() => Math.max(1, ...byDay.value.map((d) => d.amount)))
+const dayTotal = computed(() => byDay.value.reduce((s, d) => s + d.amount, 0))
 
 /** 预算输入(仅创建者) */
 function onBudgetChange(e) {
@@ -117,6 +133,34 @@ function onBudgetChange(e) {
         </div>
       </div>
       <p v-else class="muted text-[13px]">还没有任何支出,记下第一笔后这里会自动统计。</p>
+    </div>
+
+    <!-- 按日花费 -->
+    <div class="card p-6">
+      <div class="mb-4 flex items-center justify-between">
+        <p class="title-2">按日花费</p>
+        <span v-if="byDay.length" class="chip chip-plain !text-[11px]">
+          <i class="fa-solid fa-chart-column mr-1 text-primary/70" aria-hidden="true"></i>共 {{ dayTotal ? money(dayTotal) : '¥0' }}
+        </span>
+      </div>
+      <div v-if="byDay.length" class="space-y-3">
+        <div v-for="d in byDay" :key="d.date" class="flex items-center gap-3">
+          <span class="w-20 shrink-0 text-[12px] font-semibold text-ink-soft">{{ fmtDay(d.date, false) }}</span>
+          <div class="relative h-7 flex-1 overflow-hidden rounded-[8px] bg-surface-2">
+            <div
+              class="h-full rounded-[8px] bg-gradient-to-r from-[#e79ab1] to-primary transition-[width] duration-500 ease-out"
+              :style="{ width: Math.max(6, (d.amount / dayMax) * 100) + '%' }"
+            ></div>
+            <span class="absolute left-2 top-1/2 -translate-y-1/2 text-[11px] font-semibold" :class="d.amount / dayMax > 0.45 ? 'text-white' : 'text-muted'">
+              {{ money(d.amount) }}
+              <template v-if="d.count > 1">({{ d.count }} 笔)</template>
+            </span>
+          </div>
+        </div>
+      </div>
+      <p v-else class="muted text-[13px]">
+        还没有按日账单 —— 记一笔时填上「发生日期」,这里会显示每天的消费曲线。
+      </p>
     </div>
 
     <!-- 人日均/预算分配提示 -->

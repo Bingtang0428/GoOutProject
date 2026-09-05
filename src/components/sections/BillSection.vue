@@ -16,6 +16,7 @@ import Avatar from '@/components/ui/Avatar.vue'
 import BudgetPanel from './BudgetPanel.vue'
 import VehiclePanel from './VehiclePanel.vue'
 import { money } from '@/utils/money'
+import { fmtDay, todayISO } from '@/utils/date'
 
 const props = defineProps({
   plan: { type: Object, required: true },
@@ -67,6 +68,7 @@ const editingId = ref(null)
 const form = reactive({
   name: '',
   amount: null,
+  date: todayISO(),
   category: 'other',
   paid_by: null, // {id,name}
   involves: [],
@@ -79,6 +81,7 @@ function resetForm() {
   Object.assign(form, {
     name: '',
     amount: null,
+    date: todayISO(),
     category: 'other',
     paid_by: all[0] ? { id: all[0].id, name: all[0].name } : null,
     involves: all.map((p) => ({ id: p.id, name: p.name })),
@@ -104,6 +107,7 @@ function openEdit(b) {
   Object.assign(form, {
     name: b.name,
     amount: b.amount,
+    date: b.date || todayISO(),
     category: b.category,
     paid_by: b.paid_by ? { id: b.paid_by.id, name: b.paid_by.name } : null,
     involves: (b.involves || []).map((i) => ({ id: i.id, name: i.name })),
@@ -129,6 +133,7 @@ async function save() {
   const payload = {
     name: form.name.trim(),
     amount: Math.round(Number(form.amount) * 100) / 100,
+    date: form.date,
     category: form.category,
     paid_by: { id: form.paid_by.id, name: form.paid_by.name },
     involves: form.involves,
@@ -322,6 +327,9 @@ function linkChip(b) {
             <p class="mt-1 flex flex-wrap items-center gap-2 text-[12px] text-muted">
               <Avatar :name="whoName(b.paid_by)" :size="18" :ring="false" />
               <span>{{ whoName(b.paid_by) }} 垫付</span>
+              <span class="chip chip-plain !px-1.5 !py-0 !text-[11px]">
+                <i class="fa-regular fa-calendar mr-1" aria-hidden="true"></i>{{ fmtDay(b.date, false) }}
+              </span>
               <template v-if="linkChip(b)">
                 <i class="fa-solid fa-link text-[10px] text-primary/70" aria-hidden="true"></i>
                 <span class="text-primary/80">{{ linkChip(b) }}</span>
@@ -390,6 +398,11 @@ function linkChip(b) {
             <label class="flabel">金额 *</label>
             <input v-model.number="form.amount" type="number" min="0" step="0.01" class="field" placeholder="0.00" />
           </div>
+        </div>
+
+        <div>
+          <label class="flabel">发生日期(用于按日花费统计)</label>
+          <input v-model="form.date" type="date" class="field" :max="todayISO()" />
         </div>
 
         <div>
