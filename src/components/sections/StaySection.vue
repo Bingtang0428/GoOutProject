@@ -227,7 +227,7 @@ function tagTone(tag) {
     </div>
 
     <!-- 两列网格(≥768px 并排),按 Day 严格分组展示 -->
-    <template>
+    <div>
       <template v-for="g in groupsForShow" :key="'g' + g.day">
         <p class="mb-3 flex items-center gap-3 text-[13.5px] font-bold text-ink">
           <span
@@ -385,8 +385,9 @@ function tagTone(tag) {
         </article>
         </div>
       </template>
+    </div>
     </template>
-    </template>
+
 
     <EmptyState
       v-else
