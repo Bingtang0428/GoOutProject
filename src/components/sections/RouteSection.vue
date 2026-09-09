@@ -14,7 +14,8 @@ import { fmtDay, dayIndex, eachDayISO, parseISO } from '@/utils/date'
 import { uid, PASTEL_GRADS } from '@/utils/misc'
 import { geocodePlace, navUrl, wgs2gcj } from '@/api/geocode'
 import { fetchDailyWeather, wxMeta, wxTempText } from '@/api/weather'
-import { drivingLeg, transitMinutes, fmtMinute } from '@/api/route'
+import { drivingLeg, transitMinutes, fmtMinute, fmtRoadsText } from '@/api/route'
+import { isSupabase } from '@/api/supabase'
 import BaseModal from '@/components/ui/BaseModal.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseTag from '@/components/ui/BaseTag.vue'
@@ -191,7 +192,11 @@ async function autoCalcLeg(day, dest) {
     await store.updateDestinationFields(props.plan.id, day.date, dest.id, {
       drive_min: drive,
       transit_min: transit,
-      distance_km: leg?.km ?? null
+      distance_km: leg?.km ?? null,
+      // 真实路网折线与途经道路(云端高德路线;仅本地演示/高德不可用时为空)
+      drive_tolls: leg?.tolls ?? null,
+      drive_roads: leg?.roads || [],
+      drive_geo: leg?.geometry?.length ? leg.geometry : []
     })
     if (view.value === 'map') drawSegments() // 地图同步刷新路段
     return true
@@ -337,12 +342,62 @@ function fmtHours(min) {
   return h ? `${h} 小时 ${min % 60} 分` : `${min} 分钟`
 }
 
-/** 按顺序把 单天/跨天 自驾路段画到地图上(遵循 mapDay 过滤) */
+/** 该段是否已有真实路网折线(dest 上的 drive_geo,WGS84) */
+function haveGeo(it) {
+  const g = it?.dest?.drive_geo
+  return Array.isArray(g) && g.length > 1
+}
+
+/** 折线坐标投影:底图为高德(GCJ)时逐点转换,否则原样 */
+function toDrawPts(geo) {
+  if (!Array.isArray(geo) || geo.length < 2) return []
+  return mapInAmap ? geo.map((p) => wgs2gcj(p.lat, p.lng)) : geo.map((p) => ({ lat: p.lat, lng: p.lng }))
+}
+
+/**
+ * 为缺少真实路网的连续路段补取高德路线(逐段串行,克制限流):
+ * 参与者自动落库(drive_geo/roads/tolls),围观者仅本会话展示
+ */
+async function ensureLegGeometries(items) {
+  if (!isSupabase) return 0 // 本地演示无高德代理,保留直线兜底
+  let n = 0
+  for (let i = 1; i < items.length; i++) {
+    const cur = items[i]
+    if (haveGeo(cur)) continue
+    const prev = items[i - 1]
+    const a = prev.dest._wgs // 库内 WGS84;visItems 已注入
+    const b = cur.dest._wgs
+    if (!a || !b) continue
+    const leg = await drivingLeg(a, b)
+    if (!leg?.geometry?.length) continue
+    if (props.canEdit) {
+      await store.updateDestinationFields(props.plan.id, cur.day.date, cur.dest.id, {
+        drive_geo: leg.geometry,
+        drive_roads: leg.roads || [],
+        drive_tolls: leg.tolls ?? null
+      })
+    }
+    // 同步到本次绘制用的副本,避免本次仍画直线
+    cur.dest.drive_geo = leg.geometry
+    cur.dest.drive_roads = leg.roads || []
+    n++
+  }
+  return n
+}
+
+/** 按顺序把 单天/跨天 自驾路段画到地图上(遵循 mapDay 过滤);
+ *  优先用已存真实路网折线(drive_geo),缺失时自动补取,仍不可用才画直线 */
 async function drawSegments() {
   if (!map || !routeLayer) return
   const L = await getL()
-  routeLayer.clearLayers()
   const items = visItems().filter((it) => mapDay.value === 0 || it.di + 1 === mapDay.value)
+  const missing = items.filter((it, i) => i > 0 && !haveGeo(it) && effCoord(it.dest) && effCoord(items[i - 1].dest))
+  if (missing.length && isSupabase && !mapStatus.value) mapStatus.value = '正在获取真实路网路线…'
+  const got = missing.length ? await ensureLegGeometries(items) : 0
+  if (!map) return
+  if (got && mapStatus.value) mapStatus.value = ''
+  if (missing.length && !got && isSupabase) mapStatus.value = '路网获取暂不可用,已画直线兜底'
+  routeLayer.clearLayers()
   items.forEach((it) => addMarker(L, it))
   const pts = items.map((it) => [it.dest.lat, it.dest.lng])
   for (let i = 1; i < items.length; i++) {
@@ -350,7 +405,8 @@ async function drawSegments() {
     const cur = items[i]
     const cross = prev.di !== cur.di // 跨天自驾路段
     const color = cross ? '#7a4455' : SEG_COLORS[prev.di % SEG_COLORS.length]
-    const seg = L.polyline([pts[i - 1], pts[i]], {
+    const drawPts = haveGeo(cur) ? toDrawPts(cur.dest.drive_geo) : [pts[i - 1], pts[i]]
+    const seg = L.polyline(drawPts, {
       color,
       weight: cross ? 2.5 : 4,
       opacity: cross ? 0.55 : 0.85,
@@ -361,6 +417,8 @@ async function drawSegments() {
       const parts = []
       if (cur.dest.drive_min) parts.push(`自驾约 ${fmtMinute(cur.dest.drive_min)}`)
       if (cur.dest.transit_min) parts.push(`公交约 ${fmtMinute(cur.dest.transit_min)}`)
+      const roads = fmtRoadsText(cur.dest.drive_roads)
+      if (roads) parts.push(`经${roads}`)
       if (parts.length) {
         seg.bindTooltip(
           `<b>${escapeHtml(prev.dest.place)}</b> → <b>${escapeHtml(cur.dest.place)}</b><br/>` +
@@ -738,7 +796,7 @@ watch(
         </div>
       </div>
       <p class="muted mt-3 text-center text-[12px]">
-        地图由 OpenStreetMap 提供;点击「添加地点」后可在地图中查看实时同步
+        路段按真实路网绘制(云端经高德驾车规划,本地演示为直线兜底);底图高德/OSM 多源自动切换
       </p>
     </div>
 
@@ -836,27 +894,31 @@ watch(
                     </p>
                     <p v-if="d.note" class="mt-0.5 text-[12.5px] leading-relaxed text-muted">{{ d.note }}</p>
                     <!-- 路段时长:自驾 / 公交,支持手动填写或「自动计算」 -->
-                    <div v-if="canEdit" class="mt-1 flex flex-wrap items-center gap-1.5">
-                      <i class="fa-solid fa-car-side text-[10px] text-primary/50" aria-hidden="true"></i>
-                      <input
-                        type="number"
-                        min="1"
-                        class="drive-min-input"
-                        :value="d.drive_min ?? ''"
-                        placeholder="自驾?分"
-                        title="从上一站自驾到这里大约多少分钟"
-                        @change="(e) => store.updateDestinationFields(plan.id, day.date, d.id, { drive_min: e.target.value ? Number(e.target.value) : null })"
-                      />
-                      <i class="fa-solid fa-bus-simple text-[10px] text-amber/80" aria-hidden="true"></i>
-                      <input
-                        type="number"
-                        min="1"
-                        class="drive-min-input"
-                        :value="d.transit_min ?? ''"
-                        placeholder="公交?分"
-                        title="公共交通大约多少分钟(自动为估算值)"
-                        @change="(e) => store.updateDestinationFields(plan.id, day.date, d.id, { transit_min: e.target.value ? Number(e.target.value) : null })"
-                      />
+                    <div v-if="canEdit" class="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
+                      <span class="inline-flex items-center gap-1" title="从上一站自驾到这里大约多少分钟">
+                        <i class="fa-solid fa-car-side text-[10px] text-primary/50" aria-hidden="true"></i>
+                        <input
+                          type="number"
+                          min="1"
+                          class="drive-min-input"
+                          :value="d.drive_min ?? ''"
+                          placeholder="未填"
+                          @change="(e) => store.updateDestinationFields(plan.id, day.date, d.id, { drive_min: e.target.value ? Number(e.target.value) : null })"
+                        />
+                        <span class="unit-suffix">分</span>
+                      </span>
+                      <span class="inline-flex items-center gap-1" title="公共交通大约多少分钟(自动为估算值)">
+                        <i class="fa-solid fa-bus-simple text-[10px] text-amber/80" aria-hidden="true"></i>
+                        <input
+                          type="number"
+                          min="1"
+                          class="drive-min-input"
+                          :value="d.transit_min ?? ''"
+                          placeholder="未填"
+                          @change="(e) => store.updateDestinationFields(plan.id, day.date, d.id, { transit_min: e.target.value ? Number(e.target.value) : null })"
+                        />
+                        <span class="unit-suffix">分</span>
+                      </span>
                       <button
                         class="btn btn-soft btn-sm !px-2.5 !py-0.5 !text-[11px]"
                         title="按地图路线自动计算自驾时长,并估算公交时长"
@@ -1133,19 +1195,25 @@ watch(
 .inline-title:hover { border-color: rgb(var(--c-line)); }
 .inline-title:focus { border-color: rgb(var(--c-primary) / 0.5); }
 .drive-min-input {
-  width: 9rem;
+  width: 3.4rem;
   background: transparent;
   border: 1px dashed transparent;
   border-radius: 8px;
-  padding: 1px 8px;
-  font-size: 11.5px;
+  padding: 1px 4px 1px 8px;
+  font-size: 12px;
   color: rgb(var(--c-ink-soft));
   outline: none;
-  transition: border-color 0.2s ease-out;
+  text-align: right;
+  transition: border-color 0.2s ease-out, width 0.2s ease-out;
 }
 .drive-min-input::placeholder { color: rgb(var(--c-muted)); opacity: 0.7; }
 .drive-min-input:hover { border-color: rgb(var(--c-line)); }
-.drive-min-input:focus { border-color: rgb(var(--c-primary) / 0.5); width: 9.5rem; }
+.drive-min-input:focus { border-color: rgb(var(--c-primary) / 0.5); width: 4rem; }
+.unit-suffix {
+  min-width: 12px;
+  font-size: 11px;
+  color: rgb(var(--c-muted));
+}
 </style>
 
 <style>

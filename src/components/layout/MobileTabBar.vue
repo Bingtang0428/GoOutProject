@@ -7,11 +7,12 @@ const emit = defineEmits(['change'])
 
 const TABS = [
   { key: 'route', icon: 'fa-route', label: '路线' },
+  { key: 'drive', icon: 'fa-car-side', label: '自驾' },
   { key: 'stay', icon: 'fa-bed', label: '食宿' },
   { key: 'todo', icon: 'fa-list-check', label: '待办' },
   { key: 'guide', icon: 'fa-bookmark', label: '攻略' },
   { key: 'reminder', icon: 'fa-bell', label: '提醒' },
-  { key: 'bill', icon: 'fa-scale-balanced', label: '分账&车辆' },
+  { key: 'bill', icon: 'fa-scale-balanced', label: '分账' },
   { key: 'transit', icon: 'fa-plane-departure', label: '交通' }
 ]
 
@@ -25,7 +26,7 @@ defineExpose({ TABS })
     aria-label="功能模块"
   >
     <div
-      class="card mx-auto grid max-w-md grid-cols-7 items-stretch gap-1 !rounded-[24px] !p-1.5"
+      class="card mx-auto grid max-w-lg grid-cols-8 items-stretch gap-1 !rounded-[24px] !p-1.5"
       style="box-shadow: 0 10px 30px rgba(60, 30, 44, 0.18)"
     >
       <button

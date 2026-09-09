@@ -356,7 +356,24 @@ create table if not exists public.fuel_logs (
   created_at  timestamptz not null default now()
 );
 
+-- 自驾规划(每天一行,legs 为该日驾驶段数组)
+-- legs: [{ id, from:{name,lat,lng}, to:{name,lat,lng},
+--          drive_min, km, tolls,           -- 驾车时长(分)/里程(km)/过路费(元)
+--          roads: [{kind,label,km}],       -- 途经道路分类汇总(高速/国道/省道/…)
+--          geometry: [[lat,lng],…],        -- 真实路线折线(WGS84,≤200 点)
+--          time, note }]
+create table if not exists public.drive_days (
+  id          uuid primary key default gen_random_uuid(),
+  plan_id     uuid not null references public.plans(id) on delete cascade,
+  date        date not null,
+  title       text not null default '',             -- 当日主题,如 "合肥 → 宏村"
+  legs        jsonb not null default '[]'::jsonb,
+  created_at  timestamptz not null default now(),
+  unique (plan_id, date)
+);
+
 create index if not exists idx_route_days_plan    on public.route_days(plan_id);
+create index if not exists idx_drive_days_plan    on public.drive_days(plan_id);
 create index if not exists idx_stays_plan         on public.stays(plan_id);
 create index if not exists idx_todos_plan         on public.todos(plan_id);
 create index if not exists idx_guides_plan        on public.guides(plan_id);
@@ -373,6 +390,7 @@ create index if not exists idx_fuel_logs_plan     on public.fuel_logs(plan_id);
 -- -------------------------------------------------------------
 alter table public.plans      enable row level security;
 alter table public.route_days enable row level security;
+alter table public.drive_days enable row level security;
 alter table public.stays      enable row level security;
 alter table public.todos      enable row level security;
 alter table public.guides     enable row level security;
@@ -389,7 +407,7 @@ alter table public.memories enable row level security;
 do $$
 declare t text;
 begin
-  foreach t in array array['plans','route_days','stays','todos','guides','reminders','bills','comments','transits','vehicles','fuel_logs','invite_codes','plan_logs','memories'] loop
+  foreach t in array array['plans','route_days','drive_days','stays','todos','guides','reminders','bills','comments','transits','vehicles','fuel_logs','invite_codes','plan_logs','memories'] loop
     execute format('drop policy if exists "%s_all" on public.%I', t, t);
     execute format('create policy "%s_all" on public.%I for all using (true) with check (true)', t, t);
   end loop;

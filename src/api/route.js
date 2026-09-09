@@ -1,9 +1,13 @@
 // ============================================================
-// 行程路段时长自动估算
-//  - 自驾:OSRM 公共路由(免费无 Key,不可用时退回直线距离估算)
-//  - 公共交通:无 Key 无法获取班次时刻,按「自驾时长 × 系数 + 等待」
-//    做保守估算,并明确标注为「约」,建议由领队手动校准
+// 行程路段时长与真实路线估算
+//  - 云端(部署于 Cloudflare Pages,配了 AMAP_KEY):调用本站
+//    /api/driving(高德驾车路径规划 v3)——
+//    返回真实路网折线(geometry)、时长、里程、过路费与途经道路分类;
+//    高德失败时自动退回 OSRM/直线估算(仅时长与里程,无路网线)
+//  - 本地/无代理:OSRM 公共路由估算;再不可用时直线距离兜底
 // ============================================================
+import { isSupabase } from '@/api/supabase'
+import { gcj2wgs } from '@/api/geocode'
 
 /** haversine 公里数 */
 export function distKm(a, b) {
@@ -16,13 +20,41 @@ export function distKm(a, b) {
   return 2 * R * Math.asin(Math.sqrt(h))
 }
 
-const cache = new Map() // 'lat,lng|lat,lng' -> {min, km}
+const cache = new Map() // 'lat,lng|lat,lng' -> {min,km,geo,roads,tolls}|null
 
-/** 估算自驾(OSRM):返回 { min: 分钟, km: 公里 } */
-export async function drivingLeg(a, b, force = false) {
-  if (!a || !b || !a.lat || !a.lng || !b.lat || !b.lng) return null
-  const key = `${a.lat},${a.lng}|${b.lat},${b.lng}`
-  if (cache.has(key) && !force) return cache.get(key)
+function legKey(a, b) {
+  return `${Number(a.lat).toFixed(6)},${Number(a.lng).toFixed(6)}|${Number(b.lat).toFixed(6)},${Number(b.lng).toFixed(6)}`
+}
+
+/**
+ * 高德驾车规划(经本站 /api/driving 代理,服务端持有 key)
+ * 坐标入参为 WGS84;返回的高德 GCJ-02 折线逐点转回 WGS84 后返回
+ */
+async function amapLeg(a, b) {
+  try {
+    const u = new URL('/api/driving', window.location.origin)
+    u.searchParams.set('from', `${a.lng},${a.lat}`)
+    u.searchParams.set('to', `${b.lng},${b.lat}`)
+    const res = await fetch(u.toString())
+    const j = await res.json()
+    if (!j?.ok) return null
+    return {
+      min: j.min,
+      km: j.km,
+      tolls: j.tolls ?? 0,
+      tollKm: j.tollKm ?? 0,
+      roads: Array.isArray(j.roads) ? j.roads : [],
+      geometry: Array.isArray(j.geometry)
+        ? j.geometry.map((g) => gcj2wgs(g.lat, g.lng)).slice(0, 200)
+        : []
+    }
+  } catch {
+    return null
+  }
+}
+
+/** OSRM 兜底(无高德可用时),仅时长与里程 */
+async function osrmLeg(a, b) {
   let min = null
   let km = null
   try {
@@ -46,7 +78,29 @@ export async function drivingLeg(a, b, force = false) {
     km = km ?? Math.round(straight * 1.25 * 10) / 10
     min = min ?? Math.max(1, Math.ceil((straight / 60) * 60))
   }
-  const out = { min, km }
+  return { min, km }
+}
+
+/**
+ * 估算自驾段:返回 { min, km, tolls?, roads?, geometry? }
+ * 云端优先走高德(含真实路网 geometry),不可用时退回 OSRM/直线(无 geometry)
+ */
+export async function drivingLeg(a, b, force = false) {
+  if (!a || !b || !a.lat || !a.lng || !b.lat || !b.lng) return null
+  const key = legKey(a, b)
+  if (cache.has(key) && !force) return cache.get(key)
+
+  let out = null
+  if (isSupabase) {
+    out = await amapLeg(a, b) // geometry 可能为空(路线失败时会整段放弃)
+    if (out && out.km && out.min) {
+      cache.set(key, out)
+      return out
+    }
+    out = null
+  }
+  const leg = await osrmLeg(a, b)
+  out = { min: leg.min, km: leg.km, tolls: 0, roads: [], geometry: [] }
   cache.set(key, out)
   return out
 }
@@ -71,4 +125,17 @@ export function fmtMinute(min) {
   const rest = m % 60
   if (h === 0) return `${m} 分钟`
   return rest ? `${h} 小时 ${rest} 分` : `${h} 小时`
+}
+
+/**
+ * 途经道路摘要文案,如 “高速/快速 386km · 国道 24km”
+ * roads: [{ kind, km, via?: [路名] }]
+ */
+export function fmtRoadsText(roads) {
+  const list = Array.isArray(roads) ? roads.filter((r) => r && r.km > 0) : []
+  if (!list.length) return ''
+  return list
+    .slice(0, 4)
+    .map((r) => `${r.kind} ${Math.round(r.km)}km`)
+    .join(' · ')
 }

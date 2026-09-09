@@ -23,6 +23,7 @@ import { eachDayISO } from '@/utils/date'
 /** 实体 key ↔ Supabase 表名 映射 */
 const TABLES = {
   days: 'route_days',
+  drive: 'drive_days',
   stays: 'stays',
   todos: 'todos',
   guides: 'guides',
@@ -40,6 +41,7 @@ const CONTENT_KEYS = Object.keys(TABLES)
 
 const EMPTY = () => ({
   days: [],
+  drive: [],
   stays: [],
   todos: [],
   guides: [],
@@ -218,7 +220,7 @@ export const useContentStore = defineStore('content', () => {
   // 路线日(days)的结构化内容(坐标/标题/地点)会高频变更,不写日志
   // ------------------------------------------------------------
   async function maybeLog(planId, key, verb, label, detail = '') {
-    if (!isSupabase || key === 'days' || !planId || !label) return
+    if (!isSupabase || key === 'days' || key === 'drive' || !planId || !label) return
     try {
       const auth = useAuthStore()
       const actor = auth.user ? { id: auth.user.id, name: auth.user.name } : null
@@ -797,6 +799,232 @@ export const useContentStore = defineStore('content', () => {
     return remoteUpdate(planId, 'fuel_logs', 'fuel', id, patch)
   }
 
+  // ------------------------------------------------------------
+  // 自驾规划(drive_days) —— 每天一行,legs 为当天驾驶段数组(结构同 route_days)
+  // legs: [{ id, from:{name,lat,lng}, to:{name,lat,lng}, drive_min, km,
+  //          tolls, roads:[{kind,km,via}], geometry:[[lat,lng]…], time, note }]
+  // ------------------------------------------------------------
+  function findDriveDay(planId, date) {
+    return (rows[planId]?.drive || []).find((d) => d.date === date)
+  }
+
+  /** 云端补全某天的自驾行(幂等,保留已有 legs) */
+  async function upsertDriveDayRow(planId, date) {
+    if (!isSupabase) return null
+    const { data, error } = await supabase
+      .from('drive_days')
+      .upsert(
+        { id: makeUuid(), plan_id: planId, date, title: '', legs: [] },
+        { onConflict: 'plan_id,date', ignoreDuplicates: true }
+      )
+      .select()
+      .single()
+    if (error) {
+      console.warn('[content] 补全自驾日失败:', error.message)
+      return null
+    }
+    ensureBucket(planId)
+    applyById(planId, 'drive', data)
+    return data
+  }
+
+  /** 依据计划日期范围补全缺失的自驾占位行 */
+  async function ensureDriveDayRows(plan) {
+    if (!plan || !plan.start_date || !plan.end_date) return
+    const bucket = ensureBucket(plan.id)
+    if (isSupabase) {
+      const { data, error } = await supabase
+        .from('drive_days')
+        .select('*')
+        .eq('plan_id', plan.id)
+        .order('date', { ascending: true })
+      if (!error && data) {
+        const seen = new Set()
+        const merged = []
+        for (const row of data) {
+          merged.push(row)
+          seen.add(row.date)
+        }
+        for (const local of bucket.drive) {
+          if (!seen.has(local.date)) merged.push(local)
+        }
+        bucket.drive = merged
+      }
+    }
+    const have = new Set(bucket.drive.map((d) => d.date))
+    for (const date of eachDayISO(plan.start_date, plan.end_date)) {
+      if (have.has(date)) continue
+      if (isSupabase) {
+        await upsertDriveDayRow(plan.id, date)
+      } else {
+        await remoteWrite(plan.id, 'drive_days', 'drive', {
+          id: uid('ddr'), plan_id: plan.id, date, title: '', legs: []
+        })
+      }
+    }
+  }
+
+  /** 保证某天自驾行存在并返回 */
+  async function ensureDriveDay(planId, date) {
+    if (!findDriveDay(planId, date)) {
+      if (isSupabase) {
+        await upsertDriveDayRow(planId, date)
+      } else {
+        await remoteWrite(planId, 'drive_days', 'drive', {
+          id: uid('ddr'), plan_id: planId, date, title: '', legs: []
+        })
+      }
+    }
+  }
+
+  /** 整日 legs 落库(本地直写 / 云端乐观更新) */
+  async function setDriveLegs(planId, date, legs) {
+    const row = findDriveDay(planId, date)
+    if (!row) return
+    if (!isSupabase) {
+      await persistLocal(planId, 'drive', (l) => {
+        const t = l.find((d) => d.date === date)
+        if (t) t.legs = legs
+      })
+    } else {
+      row.legs = legs
+      const { error } = await supabase
+        .from('drive_days')
+        .update({ legs })
+        .eq('plan_id', planId)
+        .eq('date', date)
+      if (error) console.warn('[content] 更新自驾段失败:', error.message)
+    }
+  }
+
+  async function addDriveLeg(planId, date, leg) {
+    await ensureDriveDay(planId, date)
+    const row = findDriveDay(planId, date)
+    if (!row) return
+    await setDriveLegs(planId, date, [...(row.legs || []), { id: uid('dlg'), ...leg }])
+  }
+
+  async function updateDriveLeg(planId, date, legId, patch) {
+    const row = findDriveDay(planId, date)
+    if (!row) return
+    await setDriveLegs(
+      planId,
+      date,
+      (row.legs || []).map((l) => (l.id === legId ? { ...l, ...patch } : l))
+    )
+  }
+
+  async function removeDriveLeg(planId, date, legId) {
+    const row = findDriveDay(planId, date)
+    if (!row) return
+    await setDriveLegs(
+      planId,
+      date,
+      (row.legs || []).filter((l) => l.id !== legId)
+    )
+  }
+
+  async function updateDriveDayTitle(planId, date, title) {
+    const row = findDriveDay(planId, date)
+    if (!row) return
+    if (!isSupabase) {
+      await persistLocal(planId, 'drive', (l) => {
+        const t = l.find((d) => d.date === date)
+        if (t) t.title = title
+      })
+    } else {
+      row.title = title
+      const { error } = await supabase.from('drive_days').update({ title }).eq('plan_id', planId).eq('date', date)
+      if (error) console.warn('[content] 更新自驾日主题失败:', error.message)
+    }
+  }
+
+  /**
+   * 自驾规划 → 路线规划 一键同步:
+   * 每天按序把各驾驶段的「终点」并入当天路线 destinations:
+   *   - 已同步过的(带 drv_leg 标记)原地更新驾驶字段,不重复插入
+   *   - 新段追加到当天末尾(作为停留点,地点名/坐标随段)
+   *   - 不覆盖用户在该地点手工编辑的 time/note
+   * 返回 { days, added, updated }
+   */
+  async function syncDrivesToRoute(planId) {
+    const drives = (rows[planId]?.drive || []).slice().sort((a, b) => a.date.localeCompare(b.date))
+    let days = 0
+    let added = 0
+    let updated = 0
+    for (const dd of drives) {
+      const legs = dd.legs || []
+      if (!legs.length) continue
+      const day = findDay(planId, dd.date)
+      if (!day) continue
+      let dests = [...(day.destinations || [])]
+      let touchedDay = false
+      let dAdded = 0
+      let dUpdated = 0
+      for (const lg of legs) {
+        const t = lg.to || {}
+        if (!t.name) continue
+        const i = dests.findIndex((d) => d.drv_leg === lg.id)
+        const base = {
+          place: t.name,
+          lat: t.lat ?? null,
+          lng: t.lng ?? null,
+          drive_min: lg.drive_min ?? null,
+          distance_km: lg.km ?? null,
+          drive_tolls: lg.tolls ?? null,
+          drive_roads: Array.isArray(lg.roads) ? lg.roads : [],
+          drive_geo: Array.isArray(lg.geometry) && lg.geometry.length > 1 ? lg.geometry : []
+        }
+        if (i === -1) {
+          dests.push({ id: uid('dst'), time: lg.time || '', note: lg.note || '', ...base, drv_leg: lg.id })
+          dAdded++
+          touchedDay = true
+          continue
+        }
+        const d = dests[i]
+        let dirty = false
+        for (const k of ['place', 'lat', 'lng', 'drive_min', 'distance_km', 'drive_tolls', 'drive_roads', 'drive_geo']) {
+          const v = base[k]
+          if (JSON.stringify(d[k]) !== JSON.stringify(v)) {
+            d[k] = v
+            dirty = true
+          }
+        }
+        if (d.drv_leg !== lg.id) {
+          d.drv_leg = lg.id
+          dirty = true
+        }
+        if (!d.note && lg.note) {
+          d.note = lg.note
+          dirty = true
+        }
+        if (dirty) {
+          dUpdated++
+          touchedDay = true
+        }
+      }
+      if (!touchedDay) continue
+      days++
+      added += dAdded
+      updated += dUpdated
+      if (!isSupabase) {
+        await persistLocal(planId, 'days', (l) => {
+          const t = l.find((d) => d.date === dd.date)
+          if (t) t.destinations = dests
+        })
+      } else {
+        day.destinations = dests
+        const { error } = await supabase
+          .from('route_days')
+          .update({ destinations: dests })
+          .eq('plan_id', planId)
+          .eq('date', dd.date)
+        if (error) console.warn('[content] 同步自驾→路线失败:', error.message)
+      }
+    }
+    return { days, added, updated }
+  }
+
   /** 删除加油记录;若已同步进分账,连带删除对应账单。
    *  顺序:先删账单(其快照会被覆盖),最后删加油记录——
    *  保证撤销浮层恢复的是「加油记录」本身 */
@@ -818,6 +1046,12 @@ export const useContentStore = defineStore('content', () => {
     removeDestination,
     updateDayTitle,
     updateDestinationFields,
+    ensureDriveDayRows,
+    addDriveLeg,
+    updateDriveLeg,
+    removeDriveLeg,
+    updateDriveDayTitle,
+    syncDrivesToRoute,
     addStay,
     updateStay,
     removeStay,

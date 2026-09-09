@@ -23,6 +23,7 @@ import Avatar from '@/components/ui/Avatar.vue'
 import BaseTag from '@/components/ui/BaseTag.vue'
 import AvatarStack from '@/components/ui/AvatarStack.vue'
 import RouteSection from '@/components/sections/RouteSection.vue'
+import DriveSection from '@/components/sections/DriveSection.vue'
 import StaySection from '@/components/sections/StaySection.vue'
 import TodoSection from '@/components/sections/TodoSection.vue'
 import GuideSection from '@/components/sections/GuideSection.vue'
@@ -52,6 +53,7 @@ useHead({
 // —— 区块:以 URL query.sec 作为唯一状态,方便底部 Tab/桌面胶囊互相同步
 const SECTIONS = [
   { key: 'route', icon: 'fa-route', label: '路线规划' },
+  { key: 'drive', icon: 'fa-car-side', label: '自驾规划' },
   { key: 'stay', icon: 'fa-bed', label: '食宿安排' },
   { key: 'todo', icon: 'fa-list-check', label: '待办清单' },
   { key: 'guide', icon: 'fa-bookmark', label: '收藏攻略' },
@@ -98,6 +100,7 @@ async function loadPlan() {
   prevPlanId = plan.value.id
   await contentStore.ensureLoaded(plan.value)
   await contentStore.ensureDayRows(plan.value) // 日期区间变化时补齐每日占位
+  await contentStore.ensureDriveDayRows(plan.value) // 自驾规划同样按日占位
 }
 watch(
   [() => route.params.id, () => plan.value?.start_date, () => plan.value?.end_date],
@@ -359,6 +362,7 @@ onBeforeUnmount(() => {
         <!-- 模块主体:切换带 fade-up 过渡 -->
         <Transition name="fade-up" mode="out-in">
           <RouteSection :key="'route'" v-if="activeSec === 'route'" :plan="plan" :can-edit="canEdit" />
+          <DriveSection :key="'drive'" v-else-if="activeSec === 'drive'" :plan="plan" :can-edit="canEdit" />
           <StaySection :key="'stay'" v-else-if="activeSec === 'stay'" :plan="plan" :can-edit="canEdit" />
           <TodoSection :key="'todo'" v-else-if="activeSec === 'todo'" :plan="plan" :can-edit="canEdit" />
           <GuideSection :key="'guide'" v-else-if="activeSec === 'guide'" :plan="plan" :can-edit="canEdit" />
