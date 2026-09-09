@@ -25,7 +25,22 @@ const notice = ref('')
 const days = computed(() =>
   content.rowsOf(props.plan.id, 'days').slice().sort((a, b) => a.date.localeCompare(b.date))
 )
+const drives = computed(() => content.rowsOf(props.plan.id, 'drive'))
 const stays = computed(() => content.rowsOf(props.plan.id, 'stays'))
+
+/** 某天的自驾规划行(可能没有) */
+function driveOf(date) {
+  return drives.value.find((d) => d.date === date) || null
+}
+
+/** 自驾段途经道路摘要,如 “高速/快速 386km(G50沪渝高速)、国道 24km” */
+function roadsViaText(lg) {
+  const rs = (lg.roads || []).slice(0, 4)
+  if (!rs.length) return ''
+  return rs
+    .map((r) => `${r.kind} ${Math.round(r.km)}km${r.via?.[0] ? `(${r.via[0]})` : ''}`)
+    .join('、')
+}
 const todos = computed(() => content.rowsOf(props.plan.id, 'todos'))
 const transits = computed(() => content.rowsOf(props.plan.id, 'transits'))
 const reminders = computed(() => content.rowsOf(props.plan.id, 'reminders'))
@@ -174,6 +189,16 @@ const grad = computed(() => {
                   <p v-if="(d.destinations || []).some((x) => x.note)" class="mt-1">
                     <span v-for="x in d.destinations.filter((y) => y.note)" :key="'n' + x.id" class="block text-[11.5px]" style="color:#7c5a66">
                       · {{ x.place }}:{{ x.note }}
+                    </span>
+                  </p>
+                  <!-- 当日自驾明细(起终点/时长/里程/过路/途经道路) -->
+                  <p v-if="driveOf(d.date)?.legs?.length" class="mt-1.5 space-y-0.5 border-l-2 pl-2" style="border-color:#f3d9e2">
+                    <span v-for="(lg, li) in driveOf(d.date).legs" :key="lg.id" class="block text-[11.5px] leading-5" style="color:#6d4a58">
+                      <b>自驾{{ li + 1 }}</b>{{ lg.from?.name || '出发地' }} → {{ lg.to?.name }}
+                      <template v-if="lg.drive_min"> · {{ lg.drive_min }} 分钟</template>
+                      <template v-if="lg.km"> · {{ lg.km }}km</template>
+                      <template v-if="lg.tolls"> · 过路约 ¥{{ lg.tolls }}</template>
+                      <template v-if="roadsViaText(lg)"> · 经 {{ roadsViaText(lg) }}</template>
                     </span>
                   </p>
                 </div>

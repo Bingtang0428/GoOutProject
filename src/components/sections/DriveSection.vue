@@ -7,17 +7,18 @@
 //  - 一键「同步到路线规划」:把各段终点按日并入 route_days 时间轴,
 //    同步后地图/时长/途经道路在「路线规划」中一致呈现
 // ============================================================
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, watch, nextTick, onBeforeUnmount } from 'vue'
 import { useContentStore } from '@/stores/content'
 import { fmtDay, dayIndex, todayISO } from '@/utils/date'
 import { fmtMinute, drivingLeg } from '@/api/route'
-import { navUrl } from '@/api/geocode'
+import { navUrl, wgs2gcj } from '@/api/geocode'
 import { isSupabase } from '@/api/supabase'
 import { toast } from '@/composables/toast'
 import BaseModal from '@/components/ui/BaseModal.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import GeoPlacePicker from '@/components/ui/GeoPlacePicker.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
+import 'leaflet/dist/leaflet.css'
 
 const props = defineProps({
   plan: { type: Object, required: true },
@@ -55,10 +56,12 @@ async function syncToRoute() {
   syncBusy.value = true
   try {
     const r = await store.syncDrivesToRoute(props.plan.id)
-    if (!r.days && !r.added && !r.updated) {
+    if (!r.days && !r.added && !r.updated && !r.removed) {
       toast('暂无驾驶段可同步 —— 先给某天添加一段「起点 → 到达」吧')
     } else {
-      toast(`已同步 ${r.days} 天:新增 ${r.added} 站、更新 ${r.updated} 站(见「路线规划」)`)
+      const msg = `已同步 ${r.days} 天:新增 ${r.added} 站、更新 ${r.updated} 站` +
+        (r.removed ? `、清理残留 ${r.removed} 站` : '') + '(见「路线规划」)'
+      toast(msg)
     }
   } catch {
     toast('同步失败,请稍后再试')
@@ -79,7 +82,7 @@ const form = reactive({
   manualMin: '',
   manualKm: ''
 })
-const calc = reactive({ busy: false, done: false, msg: '', min: null, km: null, tolls: 0, tollKm: 0, roads: [], geometry: [] })
+const calc = reactive({ busy: false, done: false, msg: '', min: null, km: null, tolls: 0, tollKm: 0, roads: [], segs: [], geometry: [] })
 
 /** 起点默认建议:上一天的最终到达;第一天给集合城市 */
 function defaultFrom(date) {
@@ -95,7 +98,7 @@ function defaultFrom(date) {
 function openAdd(date) {
   editLeg.value = null
   Object.assign(form, { date, from: defaultFrom(date), to: null, time: '', note: '', manualMin: '', manualKm: '' })
-  Object.assign(calc, { busy: false, done: false, msg: '', min: null, km: null, tolls: 0, tollKm: 0, roads: [], geometry: [] })
+  Object.assign(calc, { busy: false, done: false, msg: '', min: null, km: null, tolls: 0, tollKm: 0, roads: [], segs: [], geometry: [] })
   showForm.value = true
 }
 
@@ -113,13 +116,13 @@ function openEdit(day, leg) {
   Object.assign(calc, {
     busy: false, done: Boolean(leg.geometry?.length || leg.drive_min), msg: '',
     min: leg.drive_min ?? null, km: leg.km ?? null, tolls: leg.tolls ?? 0,
-    tollKm: leg.tollKm ?? 0, roads: leg.roads || [], geometry: leg.geometry || []
+    tollKm: leg.tollKm ?? 0, roads: leg.roads || [], segs: leg.segs || [], geometry: leg.geometry || []
   })
   showForm.value = true
 }
 
 function onPointChange() {
-  Object.assign(calc, { busy: false, done: false, msg: '', min: null, km: null, tolls: 0, tollKm: 0, roads: [], geometry: [] })
+  Object.assign(calc, { busy: false, done: false, msg: '', min: null, km: null, tolls: 0, tollKm: 0, roads: [], segs: [], geometry: [] })
 }
 
 function canCompute() {
@@ -139,7 +142,7 @@ async function doCompute() {
         done: true,
         msg: `高德驾车:约 ${fmtMinute(leg.min)} · ${leg.km}km` + (leg.tolls ? ` · 过路费约 ¥${leg.tolls}` : ''),
         min: leg.min, km: leg.km, tolls: leg.tolls ?? 0, tollKm: leg.tollKm ?? 0,
-        roads: leg.roads || [], geometry: leg.geometry || []
+        roads: leg.roads || [], segs: leg.segs || [], geometry: leg.geometry || []
       })
     } else {
       calc.done = false
@@ -177,6 +180,7 @@ async function saveLeg() {
     tolls: form.manualMin !== '' || form.manualKm !== '' ? calc.tolls : null,
     tollKm: calc.tollKm || null,
     roads: calc.roads || [],
+    segs: calc.segs || [],
     geometry: calc.geometry || []
   }
   if (props.canEdit) {
@@ -193,8 +197,8 @@ async function saveLeg() {
 
 async function removeLeg(day, leg) {
   if (!props.canEdit) return
-  await store.removeDriveLeg(props.plan.id, day.date, leg.id)
-  toast('已删除该驾驶段')
+  const removed = await store.removeDriveLeg(props.plan.id, day.date, leg.id)
+  toast(removed ? `已删除该驾驶段,并清理了路线里它留下的 ${removed} 个同步地点` : '已删除该驾驶段')
 }
 
 async function recomputeLeg(day, leg) {
@@ -217,6 +221,7 @@ async function recomputeLeg(day, leg) {
     tolls: r.tolls ?? null,
     tollKm: r.tollKm ?? null,
     roads: r.roads || [],
+    segs: r.segs || [],
     geometry: r.geometry || []
   })
   toast('已按最新路网重新计算')
@@ -224,6 +229,112 @@ async function recomputeLeg(day, leg) {
 
 const hasCoord = (p) => Boolean(p && Number.isFinite(p.lat))
 const fmtGeo = (p) => (hasCoord(p) ? `${Number(p.lat).toFixed(5)},${Number(p.lng).toFixed(5)}` : '')
+
+/* ---------------- 单段地图预览 ---------------- */
+const preview = ref(null) // { day, leg }
+const prevMapEl = ref(null)
+let prevMap = null
+let prevRoute = null
+let prevTileIdx = 0
+const PREVIEW_TILES = [
+  'https://webrd0{s}.is.autonavi.com/appmaptile?style=7&x={x}&y={y}&z={z}&lang=zh_cn&size=1&scale=1',
+  'https://wprd0{s}.is.autonavi.com/appmaptile?style=7&x={x}&y={y}&z={z}&lang=zh_cn&size=1&scl=1',
+  'https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png'
+]
+
+function openPreview(day, leg) {
+  preview.value = { day, leg }
+  nextTick(initPreviewMap)
+}
+
+async function initPreviewMap() {
+  if (!preview.value || !prevMapEl.value) return
+  const L = await import('leaflet')
+  if (preview.value === null) return // 关闭竞态
+  destroyPreviewMap()
+  const leg = preview.value.leg
+  const pts = []
+  if (leg.geometry?.length) {
+    // 库内 WGS84 → 高德底图 GCJ-02 投影
+    for (const p of leg.geometry) pts.push(wgs2gcj(p.lat, p.lng))
+  } else if (hasCoord(leg.from) && hasCoord(leg.to)) {
+    pts.push(wgs2gcj(leg.from.lat, leg.from.lng), wgs2gcj(leg.to.lat, leg.to.lng))
+  }
+  const center = pts.length ? pts[Math.floor(pts.length / 2)] : [30.9, 118.6]
+  prevMap = L.map(prevMapEl.value, { zoomControl: true, attributionControl: true })
+  prevTileIdx = 0
+  addPrevTiles(L)
+  prevRoute = L.layerGroup().addTo(prevMap)
+  if (pts.length) {
+    const color = '#B75973'
+    const hasSegs = (leg.segs || []).some((s) => s.pts?.length > 1)
+    const pieces = hasSegs
+      ? leg.segs
+          .filter((s) => s.pts?.length > 1)
+          .map((s) => ({ pts: s.pts.map((p) => wgs2gcj(p.lat, p.lng)), kind: s.kind }))
+      : [{ pts, kind: '' }]
+    pieces.forEach((p, i) => {
+      L.polyline(p.pts, {
+        color: p.kind === '高速/快速' ? '#8E44AD' : color,
+        weight: 4.5,
+        opacity: 0.9
+      }).addTo(prevRoute)
+      void i
+    })
+    if (!hasSegs && !leg.geometry?.length) {
+      L.polyline(pts, { color, weight: 3, opacity: 0.6, dashArray: '4 6' }).addTo(prevRoute)
+    }
+    L.marker(pts[0], { icon: pinIcon(L, '起') }).addTo(prevRoute)
+    L.marker(pts[pts.length - 1], { icon: pinIcon(L, '止') }).addTo(prevRoute)
+    prevMap.fitBounds(L.latLngBounds(pts).pad(0.3), { padding: [26, 26] })
+  } else {
+    prevMap.setView(center, 5)
+    const tip = L.popup({ closeButton: false }).setLatLng(center).setContent('该段还没有坐标,无法预览路线')
+    tip.openOn(prevMap)
+  }
+}
+
+function pinIcon(L, tag) {
+  return L.divIcon({
+    className: '',
+    html: `<span class="drive-pin">${tag}</span>`,
+    iconSize: [20, 20],
+    iconAnchor: [10, 10]
+  })
+}
+
+function addPrevTiles(L) {
+  if (!prevMap) return
+  const url = PREVIEW_TILES[prevTileIdx]
+  if (!url) return
+  const layer = L.tileLayer(url, {
+    subdomains: ['1', '2', '3', '4'],
+    maxZoom: 19,
+    attribution: '&copy; <a href="https://www.amap.com/">高德地图</a>'
+  }).addTo(prevMap)
+  let once = false
+  layer.on('tileerror', () => {
+    if (once || !prevMap) return
+    once = true
+    prevMap.removeLayer(layer)
+    prevTileIdx++
+    addPrevTiles(L)
+  })
+}
+
+function destroyPreviewMap() {
+  if (prevMap) {
+    prevMap.remove()
+    prevMap = null
+    prevRoute = null
+  }
+}
+
+watch(preview, (v) => {
+  if (!v) destroyPreviewMap()
+})
+
+onBeforeUnmount(destroyPreviewMap)
 
 /* ---------------- 标题 ---------------- */
 async function onTitle(day, e) {
@@ -374,13 +485,25 @@ function firstFreeDay() {
               <p v-if="leg.note" class="mt-1.5 ml-7 text-[12.5px] leading-relaxed text-muted">{{ leg.note }}</p>
 
               <!-- 操作 -->
-              <div v-if="canEdit" class="mt-2 flex flex-wrap items-center gap-1.5 ml-7">
-                <button class="btn btn-soft btn-sm !px-2.5 !py-0.5 !text-[11px]" @click="recomputeLeg(day, leg)">
-                  <i class="fa-solid fa-arrows-rotate text-[10px]" aria-hidden="true"></i>重算路线
+              <div class="mt-2 ml-7 flex flex-wrap items-center gap-1.5">
+                <button
+                  class="btn btn-ghost btn-sm !px-2.5"
+                  title="在地图上预览该段的真实路线"
+                  @click="openPreview(day, leg)"
+                >
+                  <i class="fa-solid fa-map text-[11px] text-primary/70" aria-hidden="true"></i>预览路线
                 </button>
-                <button class="btn btn-ghost btn-sm !px-2.5" @click="openEdit(day, leg)">
-                  <i class="fa-solid fa-pen text-[11px]" aria-hidden="true"></i>编辑
-                </button>
+                <template v-if="canEdit">
+                  <button class="btn btn-soft btn-sm !px-2.5 !py-0.5 !text-[11px]" @click="recomputeLeg(day, leg)">
+                    <i class="fa-solid fa-arrows-rotate text-[10px]" aria-hidden="true"></i>重算路线
+                  </button>
+                  <button class="btn btn-ghost btn-sm !px-2.5" @click="openEdit(day, leg)">
+                    <i class="fa-solid fa-pen text-[11px]" aria-hidden="true"></i>编辑
+                  </button>
+                  <button class="icon-btn icon-btn-danger !h-7 !w-7" :title="`删除第${li + 1}段`" @click="removeLeg(day, leg)">
+                    <i class="fa-solid fa-xmark text-[11px]" aria-hidden="true"></i>
+                  </button>
+                </template>
                 <a
                   v-if="hasCoord(leg.to)"
                   class="btn btn-ghost btn-sm !px-2.5"
@@ -391,9 +514,6 @@ function firstFreeDay() {
                 >
                   <i class="fa-solid fa-location-arrow text-[11px]" aria-hidden="true"></i>导航
                 </a>
-                <button class="icon-btn icon-btn-danger !h-7 !w-7" :title="`删除第${li + 1}段`" @click="removeLeg(day, leg)">
-                  <i class="fa-solid fa-xmark text-[11px]" aria-hidden="true"></i>
-                </button>
               </div>
             </div>
           </div>
@@ -417,6 +537,37 @@ function firstFreeDay() {
     >
       <BaseButton v-if="canEdit" icon="fa-plus" @click="openAdd(firstFreeDay())">添加第一段驾驶</BaseButton>
     </EmptyState>
+
+    <!-- ============ 单段路线预览弹窗 ============ -->
+    <BaseModal v-model="preview" title="驾驶路线预览" :max-width="'720px'">
+      <template v-if="preview">
+        <div class="mb-3 flex flex-wrap items-center gap-1.5">
+          <span class="chip chip-plain !py-1 !text-[11.5px]">
+            <i class="fa-solid fa-route mr-1 text-primary/60" aria-hidden="true"></i>
+            {{ preview.leg.from?.name || '出发地' }} → {{ preview.leg.to?.name }}
+          </span>
+          <span v-if="preview.leg.drive_min" class="chip chip-plain !py-1 !text-[11.5px]">
+            <i class="fa-regular fa-clock mr-1 text-amber" aria-hidden="true"></i>{{ fmtMinute(preview.leg.drive_min) }}
+          </span>
+          <span v-if="preview.leg.km" class="chip chip-plain !py-1 !text-[11.5px]">{{ preview.leg.km }} km</span>
+          <span v-if="preview.leg.tolls" class="chip chip-plain !py-1 !text-[11.5px]">
+            <i class="fa-solid fa-money-bill-1 mr-1 text-primary/60" aria-hidden="true"></i>过路 ¥{{ preview.leg.tolls }}
+          </span>
+        </div>
+        <div
+          ref="prevMapEl"
+          class="h-[min(52vh,480px)] w-full overflow-hidden rounded-[14px]"
+          style="min-height: 300px"
+        ></div>
+        <p v-if="!(preview.leg.geometry?.length || (hasCoord(preview.leg.from) && hasCoord(preview.leg.to)))"
+           class="muted mt-2 text-center text-[12px]">
+          该段还没有坐标,无法预览;在编辑里为起终点精确定位后会自动计算真实路线
+        </p>
+        <p v-else class="muted mt-2 text-center text-[12px]">
+          紫/主色线为真实驾车路线(高德);无路网数据时以虚线示意
+        </p>
+      </template>
+    </BaseModal>
 
     <!-- ============ 驾驶段 新增 / 编辑 弹窗 ============ -->
     <BaseModal v-model="showForm" :title="editLeg ? '编辑驾驶段' : '添加驾驶段'" :max-width="'620px'">
@@ -538,4 +689,23 @@ function firstFreeDay() {
 }
 .inline-title:hover { border-color: rgb(var(--c-line)); }
 .inline-title:focus { border-color: rgb(var(--c-primary) / 0.5); }
+</style>
+
+<style>
+/* Leaflet 挂载节点在组件子树外,需全局样式 */
+.drive-pin {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: rgb(183 89 115);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 800;
+  box-shadow: 0 2px 8px rgba(183, 89, 115, 0.45), 0 0 0 2px #fff;
+}
+.leaflet-container { font-family: inherit; }
+.leaflet-popup-content-wrapper { border-radius: 14px; }
 </style>

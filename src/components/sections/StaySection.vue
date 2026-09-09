@@ -5,6 +5,7 @@
 // ============================================================
 import { ref, computed, reactive } from 'vue'
 import { useContentStore } from '@/stores/content'
+import { useAuthStore } from '@/stores/auth'
 import { eachDayISO, fmtDay } from '@/utils/date'
 import BaseModal from '@/components/ui/BaseModal.vue'
 import Avatar from '@/components/ui/Avatar.vue'
@@ -19,6 +20,7 @@ const props = defineProps({
   canEdit: { type: Boolean, default: true }
 })
 const store = useContentStore()
+const auth = useAuthStore()
 
 const stays = computed(() => store.rowsOf(props.plan.id, 'stays'))
 const bookedCount = computed(() => stays.value.filter((s) => s.booked).length)
@@ -61,6 +63,37 @@ const editingId = ref(null) // null = 新增
 const form = reactive({ type: 'stay', name: '', geo: null, phone: '', tags: [], booked: false, tagInput: '', assignee: null, day: null })
 
 const participants = computed(() => (props.plan.members || []).slice())
+
+/* ---------------- 票选与选定(选定后同步进当天路线) ---------------- */
+const me = computed(() => ({ id: auth.user?.id || null, name: auth.user?.name || '' }))
+
+function mineVote(s) {
+  return (s.votes || []).some((v) => (me.value.id && v.id === me.value.id) || (!me.value.id && v.name === me.value.name))
+}
+
+async function toggleVote(s) {
+  if (!props.canEdit || !me.value.name) return
+  await store.voteStay(props.plan.id, s.id, me.value, !mineVote(s))
+}
+
+function chosenDayText(s) {
+  if (!s.day || !plannedDates.value[s.day - 1]) return ''
+  return `第 ${s.day} 天 ${fmtDay(plannedDates.value[s.day - 1], false)}`
+}
+
+async function confirmStay(s) {
+  if (!props.canEdit) return
+  const r = await store.chooseStay(props.plan.id, s.id, me.value, true)
+  if (r?.ok) toast(`已选定「${s.name}」并加入${chosenDayText(s)}路线`)
+  else if (r?.reason === 'no_coord') toast('这家还没有精确定位 —— 先「编辑」并用选点器选到准确位置,才能同步进路线')
+  else if (r?.reason === 'no_day') toast('请先把这家安排到具体某一天,才能同步进路线')
+}
+
+async function unconfirmStay(s) {
+  if (!props.canEdit) return
+  await store.chooseStay(props.plan.id, s.id, null, false)
+  toast('已取消选定,路线中的该地点已移除')
+}
 
 /** 地址 → 高德/国内地图检索链接 */
 function mapUrl(address) {
@@ -205,7 +238,12 @@ function tagTone(tag) {
           <span class="h-px flex-1 bg-line"></span>
         </p>
         <div class="grid grid-cols-1 gap-6 md:grid-cols-2">
-          <article v-for="s in g.items" :key="s.id" class="card card-lift group flex flex-col p-6">
+          <article
+            v-for="s in g.items"
+            :key="s.id"
+            class="card card-lift group flex flex-col p-6 transition-all duration-250"
+            :class="s.chosen ? 'ring-2 ring-primary/70 shadow-pop' : ''"
+          >
           <header class="mb-4 flex items-start justify-between gap-3">
             <div class="flex items-center gap-3">
               <span
@@ -220,6 +258,7 @@ function tagTone(tag) {
                 </BaseTag>
                 <BaseTag v-if="s.booked" tone="success" icon="fa-circle-check">已预订</BaseTag>
                 <BaseTag v-else tone="plain">待预订</BaseTag>
+                <BaseTag v-if="s.chosen" tone="success" icon="fa-check-double">已选定 · 已入路线</BaseTag>
               </div>
             </div>
             <div class="flex gap-1">
@@ -261,6 +300,64 @@ function tagTone(tag) {
           <div v-if="s.tags?.length" class="mb-4 flex flex-wrap gap-2">
             <BaseTag v-for="t in s.tags" :key="t" :tone="tagTone(t)">{{ t }}</BaseTag>
           </div>
+
+          <!-- 票选 -->
+          <div class="mb-4 rounded-[14px] bg-surface-2/70 px-4 py-3">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <p class="flex items-center gap-2 text-[12.5px] font-semibold text-ink-soft">
+                <i class="fa-solid fa-hand text-[11px] text-primary/70" aria-hidden="true"></i>
+                成员票选
+                <span v-if="s.votes?.length" class="chip chip-brand !px-2 !py-0 text-[10.5px]">{{ s.votes.length }} 票</span>
+              </p>
+              <button
+                v-if="canEdit && me.name"
+                type="button"
+                class="chip cursor-pointer transition-all duration-150 active:scale-95"
+                :class="mineVote(s) ? 'chip-brand' : 'chip-plain hover:!bg-primary/10'"
+                @click="toggleVote(s)"
+              >
+                <i :class="mineVote(s) ? 'fa-solid fa-check mr-1' : 'fa-regular fa-hand-point-up mr-1'" aria-hidden="true"></i>
+                {{ mineVote(s) ? '已投 · 取消' : '投一票' }}
+              </button>
+            </div>
+            <div v-if="s.votes?.length" class="mt-2 flex flex-wrap items-center gap-1.5">
+              <span v-for="v in s.votes.slice(0, 8)" :key="v.id || v.name" class="chip chip-plain !px-1.5 !py-0.5" :title="v.name">
+                <Avatar :name="v.name" :size="16" :ring="false" />
+                <span class="max-w-[64px] truncate">{{ v.name }}</span>
+              </span>
+              <span v-if="s.votes.length > 8" class="muted text-[11px]">+{{ s.votes.length - 8 }} 人</span>
+            </div>
+            <p v-else class="mt-1 text-[11.5px] text-muted">还没有人投票,来投出第一票</p>
+
+            <!-- 选定(→同步进路线) -->
+            <div class="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-line/60 pt-2.5">
+              <p class="min-w-0 text-[11px] leading-4 text-muted">
+                <template v-if="s.chosen">
+                  <i class="fa-solid fa-circle-check mr-1 text-primary" aria-hidden="true"></i>
+                  已加入{{ chosenDayText(s) }}路线
+                </template>
+                <template v-else>
+                  <i class="fa-solid fa-lightbulb mr-1 text-amber" aria-hidden="true"></i>
+                  全队票完后由一人选定,自动同步进当天路线
+                </template>
+              </p>
+              <div v-if="canEdit" class="flex items-center gap-1.5">
+                <button
+                  v-if="!s.chosen"
+                  type="button"
+                  class="btn btn-primary btn-sm !px-3"
+                  :title="s.day ? '' : '需先安排到具体某一天'"
+                  @click="confirmStay(s)"
+                >
+                  <i class="fa-solid fa-check-double mr-1" aria-hidden="true"></i>选定并入路线
+                </button>
+                <button v-else type="button" class="btn btn-ghost btn-sm !px-3" @click="unconfirmStay(s)">
+                  <i class="fa-solid fa-rotate-left mr-1" aria-hidden="true"></i>取消选定
+                </button>
+              </div>
+            </div>
+          </div>
+
 
           <footer class="mt-auto flex items-center justify-between border-t border-line/70 pt-4">
             <span class="muted text-[12px]">预订状态</span>

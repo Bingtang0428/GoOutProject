@@ -70,6 +70,10 @@ alter table public.stays add column if not exists assignee jsonb;
 alter table public.stays add column if not exists day smallint;
 alter table public.stays add column if not exists latitude double precision;
 alter table public.stays add column if not exists longitude double precision;
+-- 食宿投票与选定(票选后选定 → 同步进路线规划)
+alter table public.stays add column if not exists votes jsonb not null default '[]'::jsonb;   -- [{id,name}]
+alter table public.stays add column if not exists chosen boolean not null default false;     -- 该候选是否已被选定
+alter table public.stays add column if not exists chosen_by jsonb;                           -- 由谁选定 {id,name}
 
 -- TODO 清单(assignee = 指派给谁,分工用)
 create table if not exists public.todos (

@@ -1,8 +1,9 @@
 // Cloudflare Pages Function:驾车路线规划代理(高德 Web服务 /v3/direction/driving)
 // 输入: /api/driving?from=<lng,lat>&to=<lng,lat>[&strategy=10]
-// 输出: { ok, km, min, tolls, roads, geometry }
+// 输出: { ok, km, min, tolls, roads, segs, geometry }
 //   - geometry 为高德 GCJ-02 折线 [{lat,lng},…](≤200 点),客户端统一转 WGS84 后入库
 //   - roads 为途经道路分类汇总 [{kind,km,via:[代表路名]}],kind ∈ 高速/国道/省道/县道/城市道路
+//   - segs 为按道路类型聚合的分段 [{kind,name,km,pts}],供地图分段着色与逐段预览
 // 安全:AMAP_KEY 只保存在 Pages 环境变量;结果 no-store
 import { json, amapReason, downsample } from '../lib/amap.js'
 
@@ -19,6 +20,47 @@ function roadKindOf(text) {
 /** 清洗路名,去掉编号前后空白并保留中文名称(如 "G50沪渝高速") */
 function cleanRoadName(t) {
   return String(t || '').replace(/[（(].*?[)）]/g, '').trim().slice(0, 20) || ''
+}
+
+/**
+ * 按道路类型把导航步骤聚合成若干连续段(便于地图分段着色):
+ * 相邻同类步骤合并成一段,每段保留 类型/代表路名/里程/折线(≤24 点)
+ */
+function buildSegs(steps) {
+  const segs = []
+  let cur = null
+  for (const st of steps || []) {
+    const km = (Number(st.distance) || 0) / 1000
+    if (km <= 0) continue
+    const raw = st.road || st.instruction || ''
+    const name = cleanRoadName(raw)
+    const kind = name ? roadKindOf(raw) : '城市道路'
+    const pts = []
+    if (st.polyline) {
+      for (const seg of String(st.polyline).split(';')) {
+        const [lng, lat] = seg.split(',')
+        const ln = Number(lng)
+        const la = Number(lat)
+        if (Number.isFinite(ln) && Number.isFinite(la)) pts.push({ lat: la, lng: ln })
+      }
+    }
+    if (!cur || cur.kind !== kind) {
+      cur = { kind, km: 0, name, pts: [] }
+      segs.push(cur)
+    }
+    cur.km += km
+    if (name && !cur.name) cur.name = name
+    if (pts.length) cur.pts.push(...pts)
+  }
+  return segs
+    .filter((s) => s.km >= 0.1 && s.pts.length)
+    .slice(0, 60)
+    .map((s) => ({
+      kind: s.kind,
+      km: Math.round(s.km * 10) / 10,
+      name: s.name || '',
+      pts: downsample(s.pts, 24)
+    }))
 }
 
 /**
@@ -102,6 +144,7 @@ export async function onRequestGet(context) {
     const { roads, unnamed } = summarizeRoads(path.steps)
     const tolls = Number(path.tolls) || 0
     const tollKm = Number(path.toll_distance) || 0
+    const segs = buildSegs(path.steps)
 
     return json({
       ok: true,
@@ -112,6 +155,7 @@ export async function onRequestGet(context) {
       tollKm: Number.isFinite(tollKm) && tollKm > 0 ? Math.round(tollKm / 1000) : 0,
       roads,
       unnamedKm: Math.round(unnamed * 10) / 10,
+      segs,
       geometry: downsample(raw, 200)
     })
   } catch (e) {

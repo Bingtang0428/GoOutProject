@@ -520,7 +520,8 @@ export const useContentStore = defineStore('content', () => {
   function addStay(planId, payload) {
     return remoteWrite(planId, 'stays', 'stays', {
       id: uid('stay'), plan_id: planId, type: 'stay',
-      name: '', address: '', phone: '', tags: [], booked: false, day: null, assignee: null, ...payload
+      name: '', address: '', phone: '', tags: [], booked: false, day: null,
+      assignee: null, votes: [], chosen: false, chosen_by: null, ...payload
     })
   }
 
@@ -528,8 +529,163 @@ export const useContentStore = defineStore('content', () => {
     return remoteUpdate(planId, 'stays', 'stays', id, patch)
   }
 
-  function removeStay(planId, id) {
-    return remoteDelete(planId, 'stays', 'stays', id)
+  async function removeStay(planId, id) {
+    const row = (rows[planId]?.stays || []).find((s) => s.id === id)
+    if (row?.chosen) {
+      const date = dayDateByNum(planId, row.day)
+      if (date) await removeSyncedDest(planId, date, (d) => d.stay_link === id)
+    }
+    await remoteDelete(planId, 'stays', 'stays', id)
+  }
+
+  /** day 序号(1=第1天)→ 该天日期;无归属返回 null */
+  function dayDateByNum(planId, n) {
+    if (!n || n < 1) return null
+    const list = (rows[planId]?.days || []).slice().sort((a, b) => a.date.localeCompare(b.date))
+    return list[n - 1]?.date || null
+  }
+
+  /** 从某天的路线 destinations 中移除满足 finder 的条目,并清理其悬空评论;返回移除数 */
+  async function removeSyncedDest(planId, date, finder) {
+    const day = findDay(planId, date)
+    if (!day) return 0
+    const dests = day.destinations || []
+    const gone = dests.filter(finder)
+    if (!gone.length) return 0
+    const keep = dests.filter((d) => !finder(d))
+    if (!isSupabase) {
+      await persistLocal(planId, 'days', (l) => {
+        const t = l.find((d) => d.date === date)
+        if (t) t.destinations = keep
+      })
+    } else {
+      day.destinations = keep
+      const { error } = await supabase
+        .from('route_days')
+        .update({ destinations: keep })
+        .eq('plan_id', planId)
+        .eq('date', date)
+      if (error) console.warn('[content] 移除同步目的地失败:', error.message)
+    }
+    await dropDestComments(planId, date, gone.map((d) => d.id))
+    return gone.length
+  }
+
+  /** 删除某日某批目的地下挂的建议评论(避免残留幽灵建议) */
+  async function dropDestComments(planId, date, destIds) {
+    if (!destIds.length) return
+    const list = rows[planId]?.comments
+    if (!list) return
+    if (!isSupabase) {
+      await persistLocal(planId, 'comments', (l) =>
+        l.splice(0, l.length, ...l.filter((c) => !(c.day_date === date && destIds.includes(c.dest_id))))
+      )
+      return
+    }
+    const doomed = list.filter((c) => c.day_date === date && destIds.includes(c.dest_id))
+    if (!doomed.length) return
+    rows[planId].comments = list.filter((c) => !doomed.includes(c))
+    await supabase
+      .from('comments')
+      .delete()
+      .eq('plan_id', planId)
+      .in('id', doomed.map((c) => c.id))
+  }
+
+  /**
+   * 食宿投票:每人可给候选投 1 票 / 取消自己的票(voter: {id?, name})
+   */
+  async function voteStay(planId, id, voter, on) {
+    const row = (rows[planId]?.stays || []).find((s) => s.id === id)
+    if (!row || !voter?.name) return
+    let votes = [...(row.votes || [])]
+    const mine = votes.findIndex((v) => (voter.id && v.id === voter.id) || (!voter.id && v.name === voter.name))
+    if (on && mine === -1) votes.push({ id: voter.id || null, name: voter.name })
+    else if (!on && mine !== -1) votes.splice(mine, 1)
+    else return
+    await remoteUpdate(planId, 'stays', 'stays', id, { votes })
+  }
+
+  /**
+   * 食宿选定/取消选定 —— 选定时把地点同步进路线规划当天(按 day 序号定位日期):
+   * 同类型同天只保留一个选定;取消选定或改选时,自动从路线移除旧店。
+   * 返回 { ok, reason? } ;reason: no_day / no_coord
+   */
+  async function chooseStay(planId, id, actor, chosen) {
+    const row = (rows[planId]?.stays || []).find((s) => s.id === id)
+    if (!row) return { ok: false, reason: 'gone' }
+    const date = dayDateByNum(planId, row.day)
+    if (chosen) {
+      if (!date) return { ok: false, reason: 'no_day' }
+      if (typeof row.latitude !== 'number' || typeof row.longitude !== 'number') {
+        return { ok: false, reason: 'no_coord' }
+      }
+      // 清除该店曾同步到其它日期的旧目的地(如改过归属日),保证唯一
+      for (const anyDay of rows[planId]?.days || []) {
+        if (anyDay.date !== date) {
+          const g2 = (anyDay.destinations || []).filter((d) => d.stay_link === id)
+          if (g2.length) {
+            const keep2 = (anyDay.destinations || []).filter((d) => d.stay_link !== id)
+            if (!isSupabase) {
+              await persistLocal(planId, 'days', (l) => {
+                const t = l.find((d) => d.date === anyDay.date)
+                if (t) t.destinations = keep2
+              })
+            } else {
+              anyDay.destinations = keep2
+              const { error } = await supabase
+                .from('route_days')
+                .update({ destinations: keep2 })
+                .eq('plan_id', planId)
+                .eq('date', anyDay.date)
+              if (error) console.warn('[content] 清理旧选定目的地失败:', error.message)
+            }
+            await dropDestComments(planId, anyDay.date, g2.map((d) => d.id))
+          }
+        }
+      }
+      // 取消同类型同天的其它选定,并移除其已同步地点
+      for (const o of rows[planId]?.stays || []) {
+        if (o.type === row.type && o.day === row.day && o.chosen && o.id !== id) {
+          const od = dayDateByNum(planId, o.day)
+          if (od) await removeSyncedDest(planId, od, (d) => d.stay_link === o.id)
+          await remoteUpdate(planId, 'stays', 'stays', o.id, { chosen: false, chosen_by: null })
+        }
+      }
+      await remoteUpdate(planId, 'stays', 'stays', id, { chosen: true, chosen_by: actor || null })
+      // 写入 / 更新当天路线目的地(stay_link 幂等)
+      const day = findDay(planId, date)
+      if (!day) return { ok: true }
+      const dests = [...(day.destinations || [])]
+      const idx = dests.findIndex((d) => d.stay_link === id)
+      const meta = {
+        place: row.name,
+        lat: row.latitude,
+        lng: row.longitude,
+        note: `已选定${row.type === 'food' ? '餐厅' : '住宿'}:${row.booked ? '已预订' : '待预订'}`
+      }
+      if (idx === -1) dests.push({ id: uid('dst'), time: '', ...meta, stay_link: id })
+      else dests[idx] = { ...dests[idx], ...meta }
+      if (!isSupabase) {
+        await persistLocal(planId, 'days', (l) => {
+          const t = l.find((d) => d.date === date)
+          if (t) t.destinations = dests
+        })
+      } else {
+        day.destinations = dests
+        const { error } = await supabase
+          .from('route_days')
+          .update({ destinations: dests })
+          .eq('plan_id', planId)
+          .eq('date', date)
+        if (error) console.warn('[content] 同步选定食宿→路线失败:', error.message)
+      }
+      return { ok: true }
+    }
+    // 取消选定
+    await remoteUpdate(planId, 'stays', 'stays', id, { chosen: false, chosen_by: null })
+    if (date) await removeSyncedDest(planId, date, (d) => d.stay_link === id)
+    return { ok: true }
   }
 
   function addTodo(planId, payload) {
@@ -916,12 +1072,28 @@ export const useContentStore = defineStore('content', () => {
 
   async function removeDriveLeg(planId, date, legId) {
     const row = findDriveDay(planId, date)
-    if (!row) return
+    if (!row) return 0
     await setDriveLegs(
       planId,
       date,
       (row.legs || []).filter((l) => l.id !== legId)
     )
+    // 该段若曾同步进路线,删段时顺带清理其目的地(连同悬空评论)
+    return pruneDriveMarkers(planId, date)
+  }
+
+  /**
+   * 清理某天路线上「已不存在的驾驶段」留下的同步目的地(drv_leg 标记失效即移除)
+   * 返回清理条数
+   */
+  async function pruneDriveMarkers(planId, date) {
+    const set = new Set()
+    for (const dr of rows[planId]?.drive || []) {
+      for (const lg of dr.legs || []) set.add(lg.id)
+    }
+    const day = findDay(planId, date)
+    if (!day) return 0
+    return removeSyncedDest(planId, date, (d) => Boolean(d.drv_leg) && !set.has(d.drv_leg))
   }
 
   async function updateDriveDayTitle(planId, date, title) {
@@ -941,14 +1113,17 @@ export const useContentStore = defineStore('content', () => {
 
   /**
    * 自驾规划 → 路线规划 一键同步:
-   * 每天按序把各驾驶段的「终点」并入当天路线 destinations:
-   *   - 已同步过的(带 drv_leg 标记)原地更新驾驶字段,不重复插入
-   *   - 新段追加到当天末尾(作为停留点,地点名/坐标随段)
-   *   - 不覆盖用户在该地点手工编辑的 time/note
-   * 返回 { days, added, updated }
+   * ① 先清理失效残留(删过/改过的驾驶段在路线里的旧目的地,drv_leg 标记找不到即移除)
+   * ② 再把各段终点按序并入当天路线 destinations:
+   *    - 已同步过的(带 drv_leg 标记)原地更新驾驶字段,不重复插入
+   *    - 新段追加到当天末尾(作为停留点,地点名/坐标随段)
+   *    - 不覆盖用户在该地点手工编辑的 time/note
+   * 返回 { days, added, updated, removed }
    */
   async function syncDrivesToRoute(planId) {
     const drives = (rows[planId]?.drive || []).slice().sort((a, b) => a.date.localeCompare(b.date))
+    let removed = 0
+    for (const dd of drives) removed += await pruneDriveMarkers(planId, dd.date)
     let days = 0
     let added = 0
     let updated = 0
@@ -973,7 +1148,8 @@ export const useContentStore = defineStore('content', () => {
           distance_km: lg.km ?? null,
           drive_tolls: lg.tolls ?? null,
           drive_roads: Array.isArray(lg.roads) ? lg.roads : [],
-          drive_geo: Array.isArray(lg.geometry) && lg.geometry.length > 1 ? lg.geometry : []
+          drive_geo: Array.isArray(lg.geometry) && lg.geometry.length > 1 ? lg.geometry : [],
+          drive_segs: Array.isArray(lg.segs) && lg.segs.length ? lg.segs : []
         }
         if (i === -1) {
           dests.push({ id: uid('dst'), time: lg.time || '', note: lg.note || '', ...base, drv_leg: lg.id })
@@ -983,7 +1159,7 @@ export const useContentStore = defineStore('content', () => {
         }
         const d = dests[i]
         let dirty = false
-        for (const k of ['place', 'lat', 'lng', 'drive_min', 'distance_km', 'drive_tolls', 'drive_roads', 'drive_geo']) {
+        for (const k of ['place', 'lat', 'lng', 'drive_min', 'distance_km', 'drive_tolls', 'drive_roads', 'drive_geo', 'drive_segs']) {
           const v = base[k]
           if (JSON.stringify(d[k]) !== JSON.stringify(v)) {
             d[k] = v
@@ -1022,7 +1198,7 @@ export const useContentStore = defineStore('content', () => {
         if (error) console.warn('[content] 同步自驾→路线失败:', error.message)
       }
     }
-    return { days, added, updated }
+    return { days, added, updated, removed }
   }
 
   /** 删除加油记录;若已同步进分账,连带删除对应账单。
@@ -1050,11 +1226,14 @@ export const useContentStore = defineStore('content', () => {
     addDriveLeg,
     updateDriveLeg,
     removeDriveLeg,
+    pruneDriveMarkers,
     updateDriveDayTitle,
     syncDrivesToRoute,
     addStay,
     updateStay,
     removeStay,
+    voteStay,
+    chooseStay,
     addTodo,
     setTodoDone,
     setTodoDue,

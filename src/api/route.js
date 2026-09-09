@@ -46,6 +46,16 @@ async function amapLeg(a, b) {
       roads: Array.isArray(j.roads) ? j.roads : [],
       geometry: Array.isArray(j.geometry)
         ? j.geometry.map((g) => gcj2wgs(g.lat, g.lng)).slice(0, 200)
+        : [],
+      segs: Array.isArray(j.segs)
+        ? j.segs
+            .map((s) => ({
+              kind: s.kind,
+              km: s.km,
+              name: s.name || '',
+              pts: (s.pts || []).map((p) => gcj2wgs(p.lat, p.lng))
+            }))
+            .slice(0, 60)
         : []
     }
   } catch {
@@ -100,7 +110,7 @@ export async function drivingLeg(a, b, force = false) {
     out = null
   }
   const leg = await osrmLeg(a, b)
-  out = { min: leg.min, km: leg.km, tolls: 0, roads: [], geometry: [] }
+  out = { min: leg.min, km: leg.km, tolls: 0, roads: [], segs: [], geometry: [] }
   cache.set(key, out)
   return out
 }

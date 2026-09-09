@@ -196,6 +196,7 @@ async function autoCalcLeg(day, dest) {
       // 真实路网折线与途经道路(云端高德路线;仅本地演示/高德不可用时为空)
       drive_tolls: leg?.tolls ?? null,
       drive_roads: leg?.roads || [],
+      drive_segs: leg?.segs || [],
       drive_geo: leg?.geometry?.length ? leg.geometry : []
     })
     if (view.value === 'map') drawSegments() // 地图同步刷新路段
@@ -272,6 +273,68 @@ const escapeHtml = (s = '') =>
 
 /* 地图路段配色:按所属天着色;跨天路段用深色虚线区分 */
 const SEG_COLORS = ['#B75973', '#D98A5B', '#2FA184', '#E76F90', '#8B5FC7']
+
+/* 「路网类型」视图配色:按途经道路类型分段着色 */
+const ROAD_COLORS = {
+  '高速/快速': '#8E44AD',
+  国道: '#E67E22',
+  省道: '#0E9F6E',
+  县道: '#64748B',
+  城市道路: '#94A3B8'
+}
+
+const mapStyle = ref('day') // day=按天着色 | roads=按路网类型着色
+function setMapStyle(v) {
+  if (mapStyle.value === v) return
+  mapStyle.value = v
+  if (map) drawSegments()
+}
+
+/** 当前路线上出现的道路类型(供路网图例) */
+const presentKinds = computed(() => {
+  const set = new Set()
+  if (mapStyle.value !== 'roads') return []
+  for (const it of visItems()) {
+    for (const s of it.dest.drive_segs || []) if (s.kind) set.add(s.kind)
+    for (const r of it.dest.drive_roads || []) if (r.kind) set.add(r.kind)
+  }
+  return [...set]
+})
+
+/** 该段在「路网」视图下的绘制片段:[{ pts, kind }],数据不足返回 [] */
+function roadPiecesOf(it) {
+  const segs = it.dest.drive_segs
+  if (Array.isArray(segs) && segs.some((s) => s.pts?.length > 1)) {
+    const out = []
+    for (const s of segs) {
+      const pts = toDrawPts(s.pts)
+      if (pts.length > 1) out.push({ pts, kind: s.kind || '' })
+    }
+    if (out.length) return out
+  }
+  if (haveGeo(it)) {
+    const pts = toDrawPts(it.dest.drive_geo)
+    const kind = it.dest.drive_roads?.[0]?.kind || ''
+    return pts.length > 1 ? [{ pts, kind }] : []
+  }
+  return []
+}
+
+/** 给某段折线挂悬浮信息(时长/途经道路) */
+function bindLegTooltip(seg, prev, cur, cross) {
+  if (!(cur.dest.drive_min || cur.dest.transit_min)) return
+  const parts = []
+  if (cur.dest.drive_min) parts.push(`自驾约 ${fmtMinute(cur.dest.drive_min)}`)
+  if (cur.dest.transit_min) parts.push(`公交约 ${fmtMinute(cur.dest.transit_min)}`)
+  const roads = fmtRoadsText(cur.dest.drive_roads)
+  if (roads) parts.push(`经${roads}`)
+  seg.bindTooltip(
+    `<b>${escapeHtml(prev.dest.place)}</b> → <b>${escapeHtml(cur.dest.place)}</b><br/>` +
+      parts.map(escapeHtml).join(' · ') +
+      (cross ? '<br/><span style="color:#7a4455">跨天路段</span>' : ''),
+    { direction: 'top', opacity: 0.92 }
+  )
+}
 
 async function paintRoute() {
   if (!map || !routeLayer) return
@@ -374,19 +437,22 @@ async function ensureLegGeometries(items) {
       await store.updateDestinationFields(props.plan.id, cur.day.date, cur.dest.id, {
         drive_geo: leg.geometry,
         drive_roads: leg.roads || [],
+        drive_segs: leg.segs || [],
         drive_tolls: leg.tolls ?? null
       })
     }
     // 同步到本次绘制用的副本,避免本次仍画直线
     cur.dest.drive_geo = leg.geometry
     cur.dest.drive_roads = leg.roads || []
+    cur.dest.drive_segs = leg.segs || []
     n++
   }
   return n
 }
 
 /** 按顺序把 单天/跨天 自驾路段画到地图上(遵循 mapDay 过滤);
- *  优先用已存真实路网折线(drive_geo),缺失时自动补取,仍不可用才画直线 */
+ *  优先用已存真实路网折线(drive_geo),缺失时自动补取,仍不可用才画直线;
+ *  路网视图(style=roads)时按道路类型逐段着色 */
 async function drawSegments() {
   if (!map || !routeLayer) return
   const L = await getL()
@@ -404,6 +470,33 @@ async function drawSegments() {
     const prev = items[i - 1]
     const cur = items[i]
     const cross = prev.di !== cur.di // 跨天自驾路段
+
+    if (mapStyle.value === 'roads') {
+      // —— 路网类型视图:逐段按类型着色;无分段数据时整段用主导类型色
+      const pieces = roadPiecesOf(cur)
+      if (!pieces.length) {
+        const seg = L.polyline([pts[i - 1], pts[i]], {
+          color: '#B75973',
+          weight: 3.5,
+          opacity: 0.8,
+          interactive: true
+        }).addTo(routeLayer)
+        bindLegTooltip(seg, prev, cur, cross)
+      } else {
+        pieces.forEach((p, pi) => {
+          const seg = L.polyline(p.pts, {
+            color: ROAD_COLORS[p.kind] || '#B75973',
+            weight: 4,
+            opacity: p.kind === '高速/快速' ? 0.92 : 0.85,
+            interactive: true
+          }).addTo(routeLayer)
+          if (pi === 0) bindLegTooltip(seg, prev, cur, cross)
+        })
+      }
+      continue
+    }
+
+    // —— 默认按天着色(单天实线 / 跨天虚线)
     const color = cross ? '#7a4455' : SEG_COLORS[prev.di % SEG_COLORS.length]
     const drawPts = haveGeo(cur) ? toDrawPts(cur.dest.drive_geo) : [pts[i - 1], pts[i]]
     const seg = L.polyline(drawPts, {
@@ -413,21 +506,7 @@ async function drawSegments() {
       dashArray: cross ? '5 8' : null,
       interactive: true
     }).addTo(routeLayer)
-    if (cur.dest.drive_min || cur.dest.transit_min) {
-      const parts = []
-      if (cur.dest.drive_min) parts.push(`自驾约 ${fmtMinute(cur.dest.drive_min)}`)
-      if (cur.dest.transit_min) parts.push(`公交约 ${fmtMinute(cur.dest.transit_min)}`)
-      const roads = fmtRoadsText(cur.dest.drive_roads)
-      if (roads) parts.push(`经${roads}`)
-      if (parts.length) {
-        seg.bindTooltip(
-          `<b>${escapeHtml(prev.dest.place)}</b> → <b>${escapeHtml(cur.dest.place)}</b><br/>` +
-            parts.map(escapeHtml).join(' · ') +
-            (cross ? '<br/><span style="color:#7a4455">跨天路段</span>' : ''),
-          { direction: 'top', opacity: 0.92 }
-        )
-      }
-    }
+    bindLegTooltip(seg, prev, cur, cross)
   }
   if (pts.length === 1) {
     const p = items[0].dest
@@ -474,6 +553,7 @@ watch(
     legNote.value = ''
     autoRun.value = false
     mapDay.value = 0
+    mapStyle.value = 'day'
     view.value = 'list'
   }
 )
@@ -768,12 +848,28 @@ watch(
               @click="setMapDay(dayIndex(plan.start_date, d.date))"
             >Day {{ dayIndex(plan.start_date, d.date) }}</button>
           </div>
-          <span class="chip chip-plain !text-[11px]">
-            <i class="fa-solid fa-route mr-1 text-primary/70" aria-hidden="true"></i>
-            {{ mapTotals.realKm !== null ? mapTotals.realKm + ' km' : `约 ${mapTotals.estKm} km` }}
-            <template v-if="mapTotals.realKm !== null && mapTotals.minutes"> · </template>
-            <template v-if="mapTotals.minutes"><i class="fa-regular fa-clock mr-1 text-amber" aria-hidden="true"></i>{{ fmtHours(mapTotals.minutes) }}</template>
-          </span>
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="chip chip-plain !text-[11px]">
+              <i class="fa-solid fa-route mr-1 text-primary/70" aria-hidden="true"></i>
+              {{ mapTotals.realKm !== null ? mapTotals.realKm + ' km' : `约 ${mapTotals.estKm} km` }}
+              <template v-if="mapTotals.realKm !== null && mapTotals.minutes"> · </template>
+              <template v-if="mapTotals.minutes"><i class="fa-regular fa-clock mr-1 text-amber" aria-hidden="true"></i>{{ fmtHours(mapTotals.minutes) }}</template>
+            </span>
+            <!-- 着色方式:按天 / 按路网类型 -->
+            <span class="card flex gap-0.5 !rounded-pill !p-0.5">
+              <button
+                class="rounded-full px-2.5 py-1 text-[11px] font-semibold transition-all duration-200 active:scale-95"
+                :class="mapStyle === 'day' ? 'bg-primary text-white' : 'text-muted hover:text-primary'"
+                @click="setMapStyle('day')"
+              >按天</button>
+              <button
+                class="rounded-full px-2.5 py-1 text-[11px] font-semibold transition-all duration-200 active:scale-95"
+                :class="mapStyle === 'roads' ? 'bg-primary text-white' : 'text-muted hover:text-primary'"
+                title="路段按 高速/国道/省道… 分段着色"
+                @click="setMapStyle('roads')"
+              >按路网</button>
+            </span>
+          </div>
         </div>
         <!-- 高度自适应:小屏按视口比例,避免半屏被地图占掉 -->
         <div ref="mapEl" class="h-[min(46vh,440px)] w-full sm:h-[500px]" style="min-height: 300px"></div>
@@ -785,14 +881,22 @@ watch(
           <i class="fa-solid fa-map" aria-hidden="true"></i>{{ mapStatus }}
         </span>
         <div class="absolute bottom-3 left-4 z-[500] flex gap-2 rounded-[12px] bg-surface/85 px-3 py-2 backdrop-blur">
-          <span class="text-[11px] font-semibold text-muted">图例</span>
-          <span v-for="(d, di) in days" :key="d.id || d.date" class="flex items-center gap-1 text-[11px] text-ink-soft">
-            <i class="fa-solid fa-circle text-[8px]" :style="{ color: PASTEL_GRADS[di % PASTEL_GRADS.length][0] }" aria-hidden="true"></i>
-            D{{ di + 1 }}
-          </span>
-          <span class="flex items-center gap-1 text-[11px] text-ink-soft">
-            <span class="inline-block h-0 w-4 border-t-2 border-dashed border-[#7a4455]"></span>跨天路段
-          </span>
+          <template v-if="mapStyle === 'roads' && presentKinds.length">
+            <span class="text-[11px] font-semibold text-muted">路网</span>
+            <span v-for="k in presentKinds" :key="k" class="flex items-center gap-1 text-[11px] text-ink-soft">
+              <i class="fa-solid fa-circle text-[8px]" :style="{ color: ROAD_COLORS[k] || '#B75973' }" aria-hidden="true"></i>{{ k }}
+            </span>
+          </template>
+          <template v-else>
+            <span class="text-[11px] font-semibold text-muted">图例</span>
+            <span v-for="(d, di) in days" :key="d.id || d.date" class="flex items-center gap-1 text-[11px] text-ink-soft">
+              <i class="fa-solid fa-circle text-[8px]" :style="{ color: PASTEL_GRADS[di % PASTEL_GRADS.length][0] }" aria-hidden="true"></i>
+              D{{ di + 1 }}
+            </span>
+            <span class="flex items-center gap-1 text-[11px] text-ink-soft">
+              <span class="inline-block h-0 w-4 border-t-2 border-dashed border-[#7a4455]"></span>跨天路段
+            </span>
+          </template>
         </div>
       </div>
       <p class="muted mt-3 text-center text-[12px]">
