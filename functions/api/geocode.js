@@ -25,7 +25,7 @@ export async function onRequestGet(context) {
         const [lng, lat] = String(first.location).split(',').map(Number)
         return json({ ok: true, source: 'amap', location: { lat, lng }, label: first.formatted_address || '' })
       }
-      return json({ ok: false, reason: data.info || 'no_result', location: null })
+      return json({ ok: false, reason: amapReason(data, 'no_result'), location: null })
     } catch (e) {
       return json({ ok: false, reason: String(e && e.message), location: null })
     }
@@ -45,7 +45,7 @@ export async function onRequestGet(context) {
   try {
     const res = await fetch(`https://restapi.amap.com/v3/place/text?${params.toString()}`)
     const data = await res.json()
-    if (data.status !== '1') return json({ ok: false, reason: data.info || 'amap_error', candidates: [] })
+    if (data.status !== '1') return json({ ok: false, reason: amapReason(data, 'amap_error'), candidates: [] })
 
     const candidates = (data.pois || []).map((p) => {
       const [lng, lat] = String(p.location || '0,0').split(',').map(Number)
@@ -66,9 +66,34 @@ export async function onRequestGet(context) {
   }
 }
 
+/**
+ * 把高德返回的 info/infocode 拼进 reason 并附可自查提示
+ * (错误码表:https://lbs.amap.com/api/webservice/guide/tools/info)
+ * 例: reason = "INVALID_USER_KEY(10001) · key 不正确或过期"
+ */
+const AMAP_HINTS = {
+  10001: 'key 不正确或过期',
+  10005: '服务器出口 IP 未在高德控制台设置的 IP 白名单内(Cloudflare 出口 IP 会变动)',
+  10007: '该 key 开启了数字签名,请求需带 sig 参数',
+  10009: '请求 key 与绑定平台不符,需使用「Web服务」类型的 key',
+  10003: '今日配额已用尽,明日 0 点自动解封',
+  10004: '单位时间内请求过频,已被临时限流',
+  10010: '未设置 IP 白名单,单 IP 请求超限(需提工单解封)',
+  10013: 'key 已被删除',
+  10044: '账号维度日调用量超出限制'
+}
+function amapReason(data, fallback) {
+  const code = data && data.infocode
+  const info = (data && data.info) || fallback
+  return `${info}(${code || '0'})${code && AMAP_HINTS[code] ? ' · ' + AMAP_HINTS[code] : ''}`
+}
+
 function json(obj, status = 200) {
   return new Response(JSON.stringify(obj), {
     status,
-    headers: { 'content-type': 'application/json; charset=utf-8' }
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': 'no-store' // 高德代理结果不做任何缓存(含 Service Worker 之外的边缘/浏览器缓存)
+    }
   })
 }

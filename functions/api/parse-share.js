@@ -70,7 +70,10 @@ export async function onRequestGet(context) {
           label: `${poi.name} · ${poi.cityname || ''}${poi.adname ? ' · ' + poi.adname : ''}`
         })
       }
-      return json({ ok: false, reason: 'place_not_found' })
+      return json({
+        ok: false,
+        reason: `place_not_found${detail.info ? ` · ${detail.info}(${detail.infocode || '0'})` : ''}`
+      })
     }
 
     return json({ ok: false, reason: 'unsupported_share' })
@@ -82,6 +85,9 @@ export async function onRequestGet(context) {
 function json(obj, status = 200) {
   return new Response(JSON.stringify(obj), {
     status,
-    headers: { 'content-type': 'application/json; charset=utf-8' }
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': 'no-store' // 解析结果不做任何缓存
+    }
   })
 }

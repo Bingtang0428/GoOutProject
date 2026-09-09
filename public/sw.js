@@ -28,6 +28,7 @@ self.addEventListener('fetch', (e) => {
   if (req.method !== 'GET') return
   const url = new URL(req.url)
   if (url.origin !== self.location.origin) return // 不缓存跨域资源
+  if (url.pathname.startsWith('/api/')) return // /api/*(高德代理等)一律走网络,不做缓存,避免结果被冻结/失效
 
   // 页面导航:网络优先,失败回退到缓存的应用外壳;两者皆无时给最小 HTML
   if (req.mode === 'navigate') {
