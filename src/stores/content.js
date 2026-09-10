@@ -1023,6 +1023,7 @@ export const useContentStore = defineStore('content', () => {
       id: uid('bill'), plan_id: planId, name: '', amount: 0,
       category: 'other', paid_by: null, involves: [], link: null, note: '',
       date: new Date().toISOString().slice(0, 10),
+      spend_dates: [],
       ...payload, created_at: new Date().toISOString()
     })
   }

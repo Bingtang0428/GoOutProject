@@ -41,15 +41,24 @@ const byCat = computed(() => {
   return CATS.map((c) => ({ ...c, amount: map.get(c.key) || 0 })).filter((c) => c.amount > 0)
 })
 
-/** 按日花费(需要 bills.date):旅行中哪天花钱最多一目了然 */
+/** 按日花费:优先按「实际消费日期」分摊到旅行各天;未填则按付款日期 */
 const byDay = computed(() => {
   const map = new Map()
-  for (const b of bills.value) {
-    const d = b.date || new Date(b.created_at || Date.now()).toISOString().slice(0, 10)
+  const bump = (d, amount) => {
     const list = map.get(d) || { date: d, amount: 0, count: 0 }
-    list.amount += Number(b.amount || 0)
+    list.amount += amount
     list.count++
     map.set(d, list)
+  }
+  for (const b of bills.value) {
+    const amount = Number(b.amount || 0)
+    const sd = Array.isArray(b.spend_dates) ? [...new Set(b.spend_dates.filter(Boolean))] : []
+    if (sd.length) {
+      const each = amount / sd.length
+      for (const d of sd) bump(d, each)
+    } else {
+      bump(b.date || new Date(b.created_at || Date.now()).toISOString().slice(0, 10), amount)
+    }
   }
   return [...map.values()].sort((a, b) => a.date.localeCompare(b.date))
 })

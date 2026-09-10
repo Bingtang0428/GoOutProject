@@ -151,7 +151,8 @@ create table if not exists public.bills (
   note        text not null default '',
   created_at  timestamptz not null default now()
 );
-alter table public.bills add column if not exists date date not null default current_date;
+alter table public.bills add column if not exists date date not null default current_date; -- 付款日期(预定时可能早于行程)
+alter table public.bills add column if not exists spend_dates jsonb not null default '[]'::jsonb; -- 实际消费日期(旅行中的哪天/哪几天)
 -- 分类扩充:租车/打车/纪念品
 alter table public.bills drop constraint if exists bills_category_check;
 alter table public.bills add constraint bills_category_check

@@ -21,7 +21,7 @@ import InfoHint from '@/components/ui/InfoHint.vue'
 import { money } from '@/utils/money'
 import { memberOf } from '@/utils/misc'
 import { toast } from '@/composables/toast'
-import { fmtDay, todayISO } from '@/utils/date'
+import { fmtDay, todayISO, eachDayISO } from '@/utils/date'
 
 const props = defineProps({
   plan: { type: Object, required: true },
@@ -88,6 +88,7 @@ const form = reactive({
   name: '',
   amount: null,
   date: todayISO(),
+  spendDates: [], // 实际消费日期(旅行中的哪天/哪几天)
   category: 'other',
   paid_by: null, // {id,name}
   involves: [],
@@ -97,12 +98,24 @@ const form = reactive({
   note: ''
 })
 
+/* 旅行中的可选日期(用于「实际消费日期」多选) */
+const plannedDates = computed(() =>
+  props.plan.start_date && props.plan.end_date ? eachDayISO(props.plan.start_date, props.plan.end_date) : []
+)
+function toggleSpendDate(d) {
+  const i = form.spendDates.indexOf(d)
+  if (i === -1) form.spendDates.push(d)
+  else form.spendDates.splice(i, 1)
+  form.spendDates.sort()
+}
+
 function resetForm() {
   const all = people.value
   Object.assign(form, {
     name: '',
     amount: null,
     date: todayISO(),
+    spendDates: [],
     category: 'other',
     paid_by: all[0] ? { id: all[0].id, name: all[0].name } : null,
     involves: all.map((p) => ({ id: p.id, name: p.name })),
@@ -139,6 +152,7 @@ function openEdit(b) {
     name: b.name,
     amount: b.amount,
     date: b.date || todayISO(),
+    spendDates: [...(b.spend_dates || [])],
     category: b.category,
     paid_by: b.paid_by ? { id: b.paid_by.id, name: b.paid_by.name } : null,
     involves: (b.involves || []).map((i) => ({ id: i.id, name: i.name })),
@@ -171,6 +185,7 @@ async function save() {
     name: form.name.trim(),
     amount: Math.round(Number(form.amount) * 100) / 100,
     date: form.date,
+    spend_dates: form.spendDates,
     category: form.category,
     paid_by: form.paid_by ? { id: form.paid_by.id, name: form.paid_by.name } : null,
     involves: form.split === 'none' ? [] : form.involves,
@@ -480,8 +495,15 @@ function linkChip(b) {
               <span v-else class="chip chip-plain !px-1.5 !py-0 !text-[11px]">
                 <i class="fa-solid fa-user-slash mr-1" aria-hidden="true"></i>未指定付款人
               </span>
-              <span class="chip chip-plain !px-1.5 !py-0 !text-[11px]">
-                <i class="fa-regular fa-calendar mr-1" aria-hidden="true"></i>{{ fmtDay(b.date, false) }}
+              <span class="chip chip-plain !px-1.5 !py-0 !text-[11px]" :title="`付款日期 ${b.date || ''}`">
+                <i class="fa-regular fa-calendar mr-1" aria-hidden="true"></i>付款 {{ fmtDay(b.date, false) }}
+              </span>
+              <span
+                v-if="b.spend_dates?.length"
+                class="chip chip-brand !px-1.5 !py-0 !text-[11px]"
+                :title="'实际消费:' + b.spend_dates.map((d) => fmtDay(d, false)).join('、')"
+              >
+                <i class="fa-solid fa-location-dot mr-1" aria-hidden="true"></i>消费 {{ b.spend_dates.map((d) => fmtDay(d, false)).join('、') }}
               </span>
               <template v-if="linkChip(b)">
                 <i class="fa-solid fa-link text-[10px] text-primary/70" aria-hidden="true"></i>
@@ -554,8 +576,31 @@ function linkChip(b) {
         </div>
 
         <div>
-          <label class="flabel">发生日期(用于按日花费统计)</label>
-          <input v-model="form.date" type="date" class="field" :max="todayISO()" />
+          <label class="flabel">
+            付款日期(实际付钱的日期,预定的可能早于行程)
+            <InfoHint align="left" text="付款日期=这笔钱实际付出时的日期;预定的酒店/机票可能早于旅行。用于记录资金流水。" />
+          </label>
+          <input v-model="form.date" type="date" class="field" />
+        </div>
+
+        <div v-if="plannedDates.length">
+          <label class="flabel">
+            实际消费日期(旅行中的哪天/哪几天,可多选)
+            <InfoHint align="left" text="这笔钱最终花在旅行中的哪天/哪几天;用于「按日花费」统计,不选则按付款日期统计。" />
+          </label>
+          <div class="flex flex-wrap gap-2">
+            <button
+              v-for="(d, i) in plannedDates"
+              :key="d"
+              type="button"
+              class="chip transition-all duration-150 active:scale-95"
+              :class="form.spendDates.includes(d) ? 'chip-brand' : 'chip-plain'"
+              @click="toggleSpendDate(d)"
+            >Day {{ i + 1 }} · {{ fmtDay(d, false) }}</button>
+          </div>
+          <p v-if="form.spendDates.length > 1" class="muted mt-1 text-[11.5px]">
+            <i class="fa-solid fa-circle-info mr-1" aria-hidden="true"></i>已选 {{ form.spendDates.length }} 天,金额将平摊到这几天
+          </p>
         </div>
 
         <div>

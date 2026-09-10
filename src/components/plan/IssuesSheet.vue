@@ -43,9 +43,13 @@ const issues = computed(() => {
     if (seen.has(k)) push('rose', 'fa-bell', `提醒「${seen.get(k)}」与「${r.title}」时间重复(${fmtDay(r.date, false)} ${k.split('|')[1] || '全天'})`)
     else seen.set(k, r.title)
   }
-  // 3) 账单日期不在行程内
+  // 3) 账单「实际消费日期」不在行程内(付款日期可早于/晚于行程,不校验)
   for (const b of rows.bills) {
-    if (b.date && (b.date < s || b.date > e)) push('amber', 'fa-scale-balanced', `账单「${b.name}」的发生日期 ${b.date} 不在行程日期内`)
+    for (const d of Array.isArray(b.spend_dates) ? b.spend_dates : []) {
+      if (d && (d < s || d > e)) {
+        push('amber', 'fa-scale-balanced', `账单「${b.name}」的实际消费日期 ${d} 不在行程日期内`)
+      }
+    }
   }
   // 4) 大交通:离开早于到达 / 日期偏离行程过大
   for (const tr of rows.transits) {
