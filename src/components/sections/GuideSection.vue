@@ -178,6 +178,7 @@ async function save() {
               :src="storageUrl(g.image)"
               :alt="g.title"
               loading="lazy"
+              referrerpolicy="no-referrer"
               class="w-full transition-transform duration-500 ease-out group-hover:scale-[1.04]"
             />
           </a>
@@ -297,7 +298,7 @@ async function save() {
             :class="form.image ? '!p-3' : ''"
           >
             <template v-if="form.image">
-              <img :src="form.image" alt="封面预览" class="max-h-44 rounded-xl object-cover" />
+              <img :src="form.image" alt="封面预览" referrerpolicy="no-referrer" class="max-h-44 rounded-xl object-cover" />
               <span class="text-[12px] font-semibold text-primary">
                 <i class="fa-solid fa-rotate mr-1" aria-hidden="true"></i>点击更换图片
               </span>

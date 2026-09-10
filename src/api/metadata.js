@@ -1,7 +1,22 @@
 // ============================================================
 // 链接自动识别(分享链接 → 标题/封面)
-// 多源尝试,任一失败即返回 null,不影响用户手动填写
+// 优先走本站 /api/link-meta 服务端代理(可抓小红书等反爬站点),
+// 失败再退回 Microlink / Jina;任一失败即返回 null,不影响手动填写
 // ============================================================
+
+async function viaLocalProxy(url) {
+  const r = await fetch(`/api/link-meta?url=${encodeURIComponent(url)}`, { cache: 'no-store' })
+  if (!r.ok) throw new Error(String(r.status))
+  const ct = r.headers.get('content-type') || ''
+  if (!ct.includes('application/json')) throw new Error('not json')
+  const j = await r.json()
+  if (!j?.ok || (!j.title && !j.image)) throw new Error('empty')
+  return {
+    title: (j.title || '').trim() || null,
+    image: (j.image || '').trim() || null,
+    description: (j.description || '').trim() || null
+  }
+}
 
 async function viaMicrolink(url) {
   const r = await fetch(`https://api.microlink.io/?url=${encodeURIComponent(url)}`)
@@ -10,7 +25,8 @@ async function viaMicrolink(url) {
   const d = j?.data || {}
   return {
     title: (d.title || '').trim() || null,
-    image: (d.image?.url || d.image || '').trim() || null
+    image: (d.image?.url || d.image || '').trim() || null,
+    description: (d.description || '').trim() || null
   }
 }
 
@@ -24,7 +40,7 @@ async function viaJina(url) {
   return { title, image }
 }
 
-const SOURCES = [viaMicrolink, viaJina]
+const SOURCES = [viaLocalProxy, viaMicrolink, viaJina]
 
 /** 自动识别分享链接元信息;失败返回 null */
 export async function fetchLinkMeta(url) {
@@ -33,7 +49,7 @@ export async function fetchLinkMeta(url) {
   for (const src of SOURCES) {
     try {
       const meta = await src(raw)
-      if (meta?.title) return meta
+      if (meta?.title || meta?.image) return meta
     } catch {
       /* 尝试下一源 */
     }

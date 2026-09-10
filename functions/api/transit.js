@@ -64,6 +64,10 @@ export async function onRequestGet(context) {
     if (!transits.length) return json({ ok: false, reason: 'no_route' })
 
     const best = transits[0]
+    // ★ 高德公交规划的总时长/距离在「方案(transits[i])」上,而非 route 上
+    const durationSec = Number(best.duration) || Number(route.duration) || 0
+    const distanceM = Number(best.distance) || Number(route.distance) || 0
+    if (!durationSec) return json({ ok: false, reason: 'no_duration' })
     const steps = []
     for (const seg of best.segments || []) {
       if (seg.walking) {
@@ -110,9 +114,9 @@ export async function onRequestGet(context) {
     return json({
       ok: true,
       source: 'amap',
-      min: Math.max(1, Math.ceil((Number(route.duration) || 0) / 60)),
-      km: Math.round(((Number(route.distance) || 0) / 1000) * 10) / 10,
-      cost: Number(route.transits?.[0]?.cost) || 0,
+      min: Math.max(1, Math.round(durationSec / 60)),
+      km: Math.round((distanceM / 1000) * 10) / 10,
+      cost: Number(best.cost) || 0,
       steps: steps.slice(0, 20)
     })
   } catch (e) {
