@@ -656,6 +656,7 @@ onBeforeUnmount(() => {
   map = null
   clearTimeout(autoTimer)
   clearTimeout(noteTimer)
+  for (const k of Object.keys(titleTimers)) clearTimeout(titleTimers[k])
 })
 
 /* ---------------- 添加 / 校正 目的地 ---------------- */
@@ -729,6 +730,28 @@ async function saveDest() {
 
 async function onTitleChange(day, e) {
   await store.updateDayTitle(props.plan.id, day.date, e.target.value)
+}
+
+/* 每日主题:输入即存(防抖)+ 失焦/回车立即落库,避免手机端 change 不触发导致丢存 */
+const titleDraft = reactive({})
+const titleTimers = {}
+function onTitleInput(day, e) {
+  titleDraft[day.date] = e.target.value
+  clearTimeout(titleTimers[day.date])
+  titleTimers[day.date] = setTimeout(() => saveTitle(day.date), 700)
+}
+function flushTitle(day) {
+  if (titleTimers[day.date]) {
+    clearTimeout(titleTimers[day.date])
+    delete titleTimers[day.date]
+  }
+  if (titleDraft[day.date] !== undefined) saveTitle(day.date)
+}
+async function saveTitle(date) {
+  const v = titleDraft[date]
+  if (v === undefined) return
+  await store.updateDayTitle(props.plan.id, date, v)
+  if (titleDraft[date] === v) delete titleDraft[date]
 }
 
 async function onRemoveDest(day, d) {
@@ -1016,10 +1039,12 @@ watch(
               <span class="text-[13px] font-semibold text-ink">{{ fmtDay(day.date) }}</span>
               <input
                 v-if="canEdit"
-                :value="day.title"
+                :value="titleDraft[day.date] ?? day.title"
                 class="inline-title"
                 :placeholder="`第${dayIndex(plan.start_date, day.date)}天 · 给今天起个主题`"
-                @change="onTitleChange(day, $event)"
+                @input="onTitleInput(day, $event)"
+                @blur="flushTitle(day)"
+                @keyup.enter="flushTitle(day)"
               />
               <span v-else class="flex-1 truncate text-[14.5px] font-semibold text-ink-soft">{{ day.title || `第${dayIndex(plan.start_date, day.date)}天` }}</span>
               <span v-if="day.destinations?.length" class="ml-auto muted text-[12px]">{{ day.destinations.length }} 站</span>
