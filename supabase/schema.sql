@@ -74,6 +74,8 @@ alter table public.stays add column if not exists longitude double precision;
 alter table public.stays add column if not exists votes jsonb not null default '[]'::jsonb;   -- [{id,name}]
 alter table public.stays add column if not exists chosen boolean not null default false;     -- 该候选是否已被选定
 alter table public.stays add column if not exists chosen_by jsonb;                           -- 由谁选定 {id,name}
+alter table public.stays add column if not exists days jsonb not null default '[]'::jsonb;   -- 多天入住 [1,2,3]
+alter table public.stays add column if not exists link text not null default '';             -- 外部预订链接(点评/携程/去哪儿…)
 
 -- TODO 清单(assignee = 指派给谁,分工用)
 create table if not exists public.todos (
@@ -162,8 +164,11 @@ create table if not exists public.invite_codes (
   created_at  timestamptz not null default now(),
   used_by     jsonb,                             -- 最近一次使用者 {id,name}
   used_at     timestamptz,
-  revoked     boolean not null default false
+  revoked     boolean not null default false,
+  grants      jsonb not null default '[]'::jsonb -- 多计划授权 [{plan_id, role:'member'|'viewer'}]
 );
+-- 兼容旧库:补加多计划授权列
+alter table public.invite_codes add column if not exists grants jsonb not null default '[]'::jsonb;
 
 -- 账号(注册时由邀请码验证建立;之后用昵称+密码登录,不再需要邀请码)
 create extension if not exists pgcrypto;
@@ -200,8 +205,25 @@ begin
      set use_count = use_count + 1, used_at = now(), used_by = jsonb_build_object('id', new_id, 'name', p_name)
    where id = rec.id;
 
-  -- 绑定计划:自动加入 参与者/围观者 名单
-  if rec.role = 'member' and rec.plan_id is not null then
+  -- 绑定计划:支持多计划授权(grants),兼容旧的单计划 plan_id/role
+  if rec.grants is not null and jsonb_array_length(rec.grants) > 0 then
+    declare g jsonb;
+    begin
+      for g in select * from jsonb_array_elements(rec.grants) loop
+        if (g->>'role') = 'viewer' then
+          update public.plans
+             set viewers = viewers || jsonb_build_array(jsonb_build_object('id', new_id, 'name', p_name))
+           where id = (g->>'plan_id')::uuid
+             and not viewers @> jsonb_build_array(jsonb_build_object('id', new_id));
+        else
+          update public.plans
+             set members = members || jsonb_build_array(jsonb_build_object('id', new_id, 'name', p_name))
+           where id = (g->>'plan_id')::uuid
+             and not members @> jsonb_build_array(jsonb_build_object('id', new_id));
+        end if;
+      end loop;
+    end;
+  elsif rec.role = 'member' and rec.plan_id is not null then
     update public.plans
        set members = members || jsonb_build_array(jsonb_build_object('id', new_id, 'name', p_name))
      where id = rec.plan_id
@@ -407,11 +429,12 @@ alter table public.fuel_logs  enable row level security;
 alter table public.invite_codes enable row level security;
 alter table public.plan_logs enable row level security;
 alter table public.memories enable row level security;
+alter table public.guide_comments enable row level security;
 
 do $$
 declare t text;
 begin
-  foreach t in array array['plans','route_days','drive_days','stays','todos','guides','reminders','bills','comments','transits','vehicles','fuel_logs','invite_codes','plan_logs','memories'] loop
+  foreach t in array array['plans','route_days','drive_days','stays','todos','guides','reminders','bills','comments','transits','vehicles','fuel_logs','invite_codes','plan_logs','memories','guide_comments'] loop
     execute format('drop policy if exists "%s_all" on public.%I', t, t);
     execute format('create policy "%s_all" on public.%I for all using (true) with check (true)', t, t);
   end loop;

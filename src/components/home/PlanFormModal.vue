@@ -1,5 +1,5 @@
 <script setup>
-import { ref, reactive, watch } from 'vue'
+import { ref, reactive, computed, watch } from 'vue'
 import { PASTEL_GRADS } from '@/utils/misc'
 import { uid } from '@/utils/misc'
 import { todayISO } from '@/utils/date'
@@ -30,8 +30,14 @@ const form = reactive({
   members: []
 })
 const saving = ref(false)
+const dateError = ref('')
+
+const dateInvalid = computed(
+  () => Boolean(form.start_date && form.end_date && form.end_date <= form.start_date)
+)
 
 function reset() {
+  dateError.value = ''
   const p = props.plan
   form.name = p?.name || ''
   form.destination = p?.destination || ''
@@ -63,6 +69,12 @@ function removeMember(id) {
 
 async function save() {
   if (!form.name.trim()) return
+  if (saving.value) return
+  if (dateInvalid.value) {
+    dateError.value = '返程日期需要晚于出发日期'
+    return
+  }
+  dateError.value = ''
   saving.value = true
   try {
     const members =
@@ -125,6 +137,10 @@ async function save() {
           <input v-model="form.budget" type="number" min="0" class="field" placeholder="6000" />
         </div>
       </div>
+      <p v-if="dateError || dateInvalid" class="flex items-center gap-1.5 text-[12.5px] font-medium text-rose">
+        <i class="fa-solid fa-circle-exclamation" aria-hidden="true"></i>
+        {{ dateError || '返程日期需要晚于出发日期' }}
+      </p>
 
       <div>
         <label class="flabel">卡片配色</label>
@@ -170,7 +186,7 @@ async function save() {
 
     <template #footer>
       <BaseButton variant="ghost" @click="emit('update:modelValue', false)">取消</BaseButton>
-      <BaseButton :disabled="!form.name.trim()" :loading="saving" @click="save">
+      <BaseButton :disabled="!form.name.trim() || dateInvalid" :loading="saving" @click="save">
         {{ plan ? '保存修改' : '创建计划' }}
       </BaseButton>
     </template>

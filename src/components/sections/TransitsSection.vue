@@ -95,6 +95,7 @@ async function createPickup(t) {
 
 /* ---------- 编辑弹窗 ---------- */
 const showForm = ref(false)
+const saving = ref(false)
 const editing = ref(null) // 编辑的 transit | null 新增
 const form = reactive({
   personId: '', personName: '', direction: 'in', mode: 'train',
@@ -149,21 +150,26 @@ function switchDirection(d) {
 }
 
 async function save() {
-  if (!form.personName || !form.leg_date) return
-  const payload = {
-    person: { id: form.personId, name: form.personName },
-    direction: form.direction,
-    mode: form.mode,
-    from_city: form.from_city.trim(),
-    to_city: form.to_city.trim(),
-    leg_date: form.leg_date,
-    time: form.time || '',
-    ref_no: form.ref_no.trim(),
-    note: form.note.trim()
+  if (!form.personName || !form.leg_date || saving.value) return
+  saving.value = true
+  try {
+    const payload = {
+      person: { id: form.personId, name: form.personName },
+      direction: form.direction,
+      mode: form.mode,
+      from_city: form.from_city.trim(),
+      to_city: form.to_city.trim(),
+      leg_date: form.leg_date,
+      time: form.time || '',
+      ref_no: form.ref_no.trim(),
+      note: form.note.trim()
+    }
+    if (editing.value) await store.updateTransit(props.plan.id, editing.value.id, payload)
+    else await store.addTransit(props.plan.id, payload)
+    showForm.value = false
+  } finally {
+    saving.value = false
   }
-  if (editing.value) await store.updateTransit(props.plan.id, editing.value.id, payload)
-  else await store.addTransit(props.plan.id, payload)
-  showForm.value = false
 }
 
 const DIR_META = {
@@ -394,7 +400,7 @@ const DIR_META = {
       </div>
       <template #footer>
         <BaseButton variant="ghost" @click="showForm = false">取消</BaseButton>
-        <BaseButton icon="fa-check" :disabled="!form.personName || !form.leg_date" @click="save">
+        <BaseButton icon="fa-check" :disabled="!form.personName || !form.leg_date" :loading="saving" @click="save">
           {{ editing ? '保存修改' : '加入安排' }}
         </BaseButton>
       </template>

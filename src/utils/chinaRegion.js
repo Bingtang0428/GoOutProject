@@ -11,15 +11,22 @@ export function listProvinces() {
   return Object.entries(root).map(([code, name]) => ({ code, name }))
 }
 
+const GENERIC_CITY = new Set(['市辖区', '县', '省直辖县级行政区划', '自治区直辖县级行政区划'])
+
 /** 某省下城市列表(直辖市直接回显自身) */
 export function listCities(provinceCode) {
   const child = pca[provinceCode]
+  const selfName = root[provinceCode]
   if (!child) {
     // 直辖市等无子级的省级:把自身当作唯一城市
-    const name = root[provinceCode]
-    return name ? [{ code: provinceCode, name }] : []
+    return selfName ? [{ code: provinceCode, name: selfName }] : []
   }
-  return Object.entries(child).map(([code, name]) => ({ code, name }))
+  const entries = Object.entries(child).map(([code, name]) => ({ code, name }))
+  // 直辖市(北京/上海/天津/重庆):子级只是「市辖区/县」,应回显城市本身
+  if (entries.length && entries.every((e) => GENERIC_CITY.has(e.name))) {
+    return selfName ? [{ code: provinceCode, name: selfName }] : []
+  }
+  return entries
 }
 
 /** 城市名 → 所属省(code),找不到返回 null */

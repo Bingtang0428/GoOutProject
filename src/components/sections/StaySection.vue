@@ -28,6 +28,12 @@ const foodCount = computed(() => stays.value.filter((s) => s.type === 'food').le
 
 const PRESET_TAGS = ['免费停车', '含早', '人均¥100', '可带宠物']
 
+/** 某条食宿归属的多个 Day 序号(兼容旧的单个 day 字段) */
+function daysOf(s) {
+  if (Array.isArray(s.days) && s.days.length) return s.days
+  return s.day ? [s.day] : []
+}
+
 /* 类型维度:住宿 / 餐厅 分开看 */
 const typeFilter = ref('all') // all | stay | food
 const baseStays = computed(() =>
@@ -43,11 +49,11 @@ const dayGroups = computed(() =>
     .map((date, i) => ({
       day: i + 1,
       label: `Day ${i + 1} · ${fmtDay(date, false)}`,
-      items: baseStays.value.filter((s) => s.day === i + 1)
+      items: baseStays.value.filter((s) => daysOf(s).includes(i + 1))
     }))
     .filter((g) => g.items.length)
 )
-const noDayItems = computed(() => baseStays.value.filter((s) => !s.day))
+const noDayItems = computed(() => baseStays.value.filter((s) => !daysOf(s).length))
 const filterDay = ref(null) // null=全部,0=未定日,N=第 N 天
 const groupsForShow = computed(() => {
   const groups = dayGroups.value.filter((g) => filterDay.value === null || g.day === filterDay.value)
@@ -60,7 +66,8 @@ const groupsForShow = computed(() => {
 // —— 新增 / 编辑弹窗
 const showEdit = ref(false)
 const editingId = ref(null) // null = 新增
-const form = reactive({ type: 'stay', name: '', geo: null, phone: '', tags: [], booked: false, tagInput: '', assignee: null, day: null })
+const saving = ref(false)
+const form = reactive({ type: 'stay', name: '', geo: null, phone: '', tags: [], booked: false, tagInput: '', assignee: null, days: [], link: '' })
 
 const participants = computed(() => (props.plan.members || []).slice())
 
@@ -77,8 +84,9 @@ async function toggleVote(s) {
 }
 
 function chosenDayText(s) {
-  if (!s.day || !plannedDates.value[s.day - 1]) return ''
-  return `第 ${s.day} 天 ${fmtDay(plannedDates.value[s.day - 1], false)}`
+  const n = daysOf(s)[0]
+  if (!n || !plannedDates.value[n - 1]) return ''
+  return `第 ${n} 天 ${fmtDay(plannedDates.value[n - 1], false)}`
 }
 
 async function confirmStay(s) {
@@ -102,7 +110,7 @@ function mapUrl(address) {
 
 function openAdd() {
   editingId.value = null
-  Object.assign(form, { type: 'stay', name: '', geo: null, phone: '', tags: [], booked: false, tagInput: '', assignee: null, day: null })
+  Object.assign(form, { type: 'stay', name: '', geo: null, phone: '', tags: [], booked: false, tagInput: '', assignee: null, days: [], link: '' })
   showEdit.value = true
 }
 
@@ -120,9 +128,18 @@ function openEdit(item) {
     booked: item.booked,
     tagInput: '',
     assignee: item.assignee || null,
-    day: item.day ?? null
+    days: daysOf(item),
+    link: item.link || ''
   })
   showEdit.value = true
+}
+
+/** 多天入住:切换某天的选中状态 */
+function toggleDay(n) {
+  const i = form.days.indexOf(n)
+  if (i === -1) form.days.push(n)
+  else form.days.splice(i, 1)
+  form.days.sort((a, b) => a - b)
 }
 
 function toggleTag(t) {
@@ -139,23 +156,30 @@ function addCustomTag() {
 }
 
 async function save() {
-  if (!form.name.trim()) return
-  const payload = {
-    type: form.type,
-    name: form.name.trim(),
-    address: form.geo?.name?.trim() || '',
-    latitude: form.geo?.lat ?? null,
-    longitude: form.geo?.lng ?? null,
-    phone: form.phone.trim(),
-    tags: form.tags,
-    booked: form.booked,
-    assignee: form.assignee,
-    day: form.day
+  if (!form.name.trim() || saving.value) return
+  saving.value = true
+  try {
+    const payload = {
+      type: form.type,
+      name: form.name.trim(),
+      address: form.geo?.name?.trim() || '',
+      latitude: form.geo?.lat ?? null,
+      longitude: form.geo?.lng ?? null,
+      phone: form.phone.trim(),
+      tags: form.tags,
+      booked: form.booked,
+      assignee: form.assignee,
+      day: form.days[0] ?? null,
+      days: [...form.days],
+      link: form.link.trim()
+    }
+    if (editingId.value) await store.updateStay(props.plan.id, editingId.value, payload)
+    else await store.addStay(props.plan.id, payload)
+    toast('食宿已保存')
+    showEdit.value = false
+  } finally {
+    saving.value = false
   }
-  if (editingId.value) await store.updateStay(props.plan.id, editingId.value, payload)
-  else await store.addStay(props.plan.id, payload)
-  toast('食宿已保存')
-  showEdit.value = false
 }
 
 async function toggleBooked(item) {
@@ -292,6 +316,12 @@ function tagTone(tag) {
             <i class="fa-solid fa-phone text-[12px] text-primary" aria-hidden="true"></i>
             <a class="font-medium text-primary hover:underline" :href="`tel:${s.phone}`">{{ s.phone }}</a>
           </div>
+          <div v-if="s.link" class="mb-1.5 flex items-center gap-2.5 text-[13px]">
+            <i class="fa-solid fa-arrow-up-right-from-square text-[11px] text-primary" aria-hidden="true"></i>
+            <a class="font-semibold text-primary hover:underline" :href="s.link" target="_blank" rel="noopener">
+              去预订 / 查看详情
+            </a>
+          </div>
           <div v-if="s.assignee" class="mb-1.5 flex items-center gap-2 text-[12.5px] text-ink-soft">
             <i class="fa-solid fa-user-check text-[11px] text-primary/70" aria-hidden="true"></i>
             负责:<Avatar :name="s.assignee.name" :size="18" :ring="false" class="ml-1" />{{ s.assignee.name }}
@@ -417,23 +447,26 @@ function tagTone(tag) {
           </div>
         </div>
         <div>
-          <label class="flabel">安排在哪一天</label>
+          <label class="flabel">入住 / 就餐的日期(可多选,支持连住多天)</label>
           <div class="flex flex-wrap gap-2">
             <button
               type="button"
               class="chip transition-all duration-150 active:scale-95"
-              :class="form.day === null ? 'chip-brand' : 'chip-plain'"
-              @click="form.day = null"
+              :class="form.days.length === 0 ? 'chip-brand' : 'chip-plain'"
+              @click="form.days = []"
             >未定日</button>
             <button
               v-for="(d, i) in plannedDates"
               :key="d"
               type="button"
               class="chip transition-all duration-150 active:scale-95"
-              :class="form.day === i + 1 ? 'chip-brand' : 'chip-plain'"
-              @click="form.day = i + 1"
+              :class="form.days.includes(i + 1) ? 'chip-brand' : 'chip-plain'"
+              @click="toggleDay(i + 1)"
             >第{{ i + 1 }}天 · {{ fmtDay(d, false) }}</button>
           </div>
+          <p v-if="form.days.length > 1" class="muted mt-1.5 text-[11.5px]">
+            <i class="fa-solid fa-circle-info mr-1" aria-hidden="true"></i>已选 {{ form.days.length }} 天,将在这几天的行程里都显示
+          </p>
         </div>
         <div>
           <label class="flabel">名称 *</label>
@@ -446,6 +479,18 @@ function tagTone(tag) {
         <div>
           <label class="flabel">预订电话</label>
           <input v-model="form.phone" class="field" type="tel" placeholder="用于一键拨打" />
+        </div>
+        <div>
+          <label class="flabel">预订 / 详情链接(可选)</label>
+          <input
+            v-model="form.link"
+            class="field"
+            type="url"
+            placeholder="粘贴大众点评 / 携程 / 去哪儿 / 美团等链接,一键跳转"
+          />
+          <p class="muted mt-1.5 text-[11.5px]">
+            <i class="fa-solid fa-circle-info mr-1" aria-hidden="true"></i>保存后卡片上会出现「去预订」按钮,点开直达对应页面
+          </p>
         </div>
         <div>
           <label class="flabel">负责成员(可选,用于人员分配)</label>
@@ -494,7 +539,7 @@ function tagTone(tag) {
       </div>
       <template #footer>
         <BaseButton variant="ghost" @click="showEdit = false">取消</BaseButton>
-        <BaseButton icon="fa-check" :disabled="!form.name.trim()" @click="save">
+        <BaseButton icon="fa-check" :disabled="!form.name.trim()" :loading="saving" @click="save">
           {{ editingId ? '保存修改' : '添加' }}
         </BaseButton>
       </template>

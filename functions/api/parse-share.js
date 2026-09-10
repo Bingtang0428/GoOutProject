@@ -24,8 +24,31 @@ export async function onRequestGet(context) {
     // 1) uri.amap.com 长链:查询参数里直接带坐标与名称
     if (/amap\.com/i.test(final.hostname)) {
       const params = final.searchParams
-      const pairKeys = ['position', 'to', 'dest', 'destination', 'location']
-      const nameKeys = ['toName', 'name', 'destName', 'keyword', 'markername']
+
+      // 1a) 分享短链跳转:?p=poiid,lat,lng,name,address…(wb.amap.com / surl.amap.com)
+      const p = params.get('p')
+      if (p) {
+        const parts = p.split(',')
+        if (parts.length >= 3) {
+          const lat = Number(parts[1])
+          const lng = Number(parts[2])
+          if (Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
+            const name = (parts[3] || '').trim()
+            const address = parts.slice(4).join(',').trim()
+            return json({
+              ok: true,
+              source: 'amap-share',
+              name: name || '分享位置',
+              lat,
+              lng,
+              label: [name, address].filter(Boolean).join(' · ') || '高德分享解析'
+            })
+          }
+        }
+      }
+
+      const pairKeys = ['position', 'to', 'dest', 'destination', 'location', 'center', 'latlng']
+      const nameKeys = ['toName', 'name', 'destName', 'keyword', 'markername', 'poiname']
       for (const pk of pairKeys) {
         const v = params.get(pk)
         if (v && /^-?\d+(\.\d+)?,-?\d+(\.\d+)?$/.test(v.trim())) {

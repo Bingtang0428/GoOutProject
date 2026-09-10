@@ -33,13 +33,14 @@ export async function onRequestGet(context) {
   }
 
   // POI 检索(选点器):高德 /v3/place/text
+  // 不限制 types(全类目检索),提升酒店/餐厅/小店等长尾地点的命中率
   const params = new URLSearchParams({
     key,
     keywords: q,
-    types: '风景名胜,商务住宅,餐饮服务,道路附属设施,地名地址信息,交通设施服务',
-    offset: '8',
+    offset: '20',
     page: '1',
-    extensions: 'base'
+    extensions: 'base',
+    citylimit: 'false'
   })
   if (city) params.set('city', city)
 

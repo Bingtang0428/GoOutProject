@@ -66,6 +66,7 @@ const linkable = computed(() => {
 /* ---------------- 新增/编辑 ---------------- */
 const showForm = ref(false)
 const editingId = ref(null)
+const saving = ref(false)
 const form = reactive({
   name: '',
   amount: null,
@@ -136,8 +137,10 @@ function amountValid() {
 }
 
 async function save() {
-  if (!amountValid()) return
-  const payload = {
+  if (!amountValid() || saving.value) return
+  saving.value = true
+  try {
+    const payload = {
     name: form.name.trim(),
     amount: Math.round(Number(form.amount) * 100) / 100,
     date: form.date,
@@ -156,10 +159,13 @@ async function save() {
     link: form.link,
     note: form.note.trim()
   }
-  if (editingId.value) await store.updateBill(props.plan.id, editingId.value, payload)
-  else await store.addBill(props.plan.id, payload)
-  toast(editingId.value ? '账单已更新' : '已记一笔')
-  showForm.value = false
+    if (editingId.value) await store.updateBill(props.plan.id, editingId.value, payload)
+    else await store.addBill(props.plan.id, payload)
+    toast(editingId.value ? '账单已更新' : '已记一笔')
+    showForm.value = false
+  } finally {
+    saving.value = false
+  }
 }
 
 /* ---------------- 按人聚合 ---------------- */
@@ -255,7 +261,13 @@ function linkChip(b) {
         <div v-if="canEdit" class="relative">
           <BaseButton variant="ghost" icon="fa-link" @click="linkOpen = !linkOpen">从行程记账</BaseButton>
           <Transition name="scale-in">
-            <div v-if="linkOpen" class="card absolute right-0 top-11 z-30 max-h-72 w-72 overflow-y-auto p-2 shadow-pop">
+            <div v-if="linkOpen" class="fixed inset-0 z-[94] bg-black/20 sm:hidden" @click="linkOpen = false"></div>
+          </Transition>
+          <Transition name="scale-in">
+            <div
+              v-if="linkOpen"
+              class="card fixed inset-x-4 bottom-4 z-[95] max-h-[60vh] overflow-y-auto p-2 shadow-pop sm:absolute sm:inset-x-auto sm:bottom-auto sm:right-0 sm:top-11 sm:w-72 sm:max-h-72"
+            >
               <button
                 v-for="l in linkable"
                 :key="l.type + l.id"
@@ -542,7 +554,7 @@ function linkChip(b) {
       </div>
       <template #footer>
         <BaseButton variant="ghost" @click="showForm = false">取消</BaseButton>
-        <BaseButton icon="fa-scale-balanced" :disabled="!amountValid()" @click="save">
+        <BaseButton icon="fa-scale-balanced" :disabled="!amountValid()" :loading="saving" @click="save">
           {{ editingId ? '保存' : '记下这笔' }}
         </BaseButton>
       </template>

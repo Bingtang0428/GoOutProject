@@ -29,14 +29,20 @@ function openAdd() {
   showAdd.value = true
 }
 
+const saving = ref(false)
 async function save() {
-  if (!form.title.trim()) return
-  await store.addReminder(props.plan.id, {
-    title: form.title.trim(),
-    date: form.date,
-    time: form.time || '09:00'
-  })
-  showAdd.value = false
+  if (!form.title.trim() || saving.value) return
+  saving.value = true
+  try {
+    await store.addReminder(props.plan.id, {
+      title: form.title.trim(),
+      date: form.date,
+      time: form.time || '09:00'
+    })
+    showAdd.value = false
+  } finally {
+    saving.value = false
+  }
 }
 
 function markAllRead() {

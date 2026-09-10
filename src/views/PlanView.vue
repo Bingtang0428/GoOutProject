@@ -33,6 +33,7 @@ import { supabase, isSupabase } from '@/api/supabase'
 import TransitsSection from '@/components/sections/TransitsSection.vue'
 import PlanPermModal from '@/components/plan/PlanPermModal.vue'
 import ExportSheet from '@/components/plan/ExportSheet.vue'
+import PptSheet from '@/components/plan/PptSheet.vue'
 import ReportSheet from '@/components/plan/ReportSheet.vue'
 import { toast } from '@/composables/toast'
 import MemorySheet from '@/components/plan/MemorySheet.vue'
@@ -119,7 +120,7 @@ const stats = computed(() => {
   return {
     days: days.length,
     dest: destCount,
-    stays: contentStore.rowsOf(id, 'stays').length,
+    stays: contentStore.rowsOf(id, 'stays').filter((s) => s.type !== 'food').length,
     bills: contentStore.rowsOf(id, 'bills').length,
     todoOpen: todos.filter((t) => !t.done).length,
     todoPct: todos.length ? Math.round((todos.filter((t) => t.done).length / todos.length) * 100) : 0,
@@ -132,6 +133,7 @@ const showForm = ref(false)
 const showDelete = ref(false)
 const showPerm = ref(false)
 const showExport = ref(false)
+const showPpt = ref(false)
 const showLogs = ref(false)
 const showReport = ref(false)
 const showMemory = ref(false)
@@ -234,6 +236,9 @@ onBeforeUnmount(() => {
         <button class="icon-btn" aria-label="导出行程单" @click="showExport = true">
           <i class="fa-solid fa-file-export" aria-hidden="true"></i>
         </button>
+        <button class="icon-btn" aria-label="生成 PPT" @click="showPpt = true">
+          <i class="fa-solid fa-file-powerpoint" aria-hidden="true"></i>
+        </button>
         <button v-if="isOwner" class="icon-btn" aria-label="成员与权限" @click="showPerm = true">
           <i class="fa-solid fa-user-shield" aria-hidden="true"></i>
         </button>
@@ -307,6 +312,9 @@ onBeforeUnmount(() => {
               </button>
               <button class="btn btn-ghost btn-sm" style="background: rgba(255,255,255,0.6)" @click="showExport = true">
                 <i class="fa-solid fa-file-export" aria-hidden="true"></i>导出行程单
+              </button>
+              <button class="btn btn-ghost btn-sm" style="background: rgba(255,255,255,0.6)" @click="showPpt = true">
+                <i class="fa-solid fa-file-powerpoint" aria-hidden="true"></i>生成 PPT
               </button>
               <button v-if="isOwner" class="btn btn-ghost btn-sm" style="background: rgba(255,255,255,0.6)" @click="showPerm = true">
                 <i class="fa-solid fa-user-shield" aria-hidden="true"></i>成员与权限
@@ -394,6 +402,7 @@ onBeforeUnmount(() => {
     <PlanFormModal v-model="showForm" :plan="plan" @save="onSave" />
     <PlanPermModal v-if="isOwner" v-model="showPerm" :plan="plan" />
     <ExportSheet v-model="showExport" :plan="plan" />
+    <PptSheet v-model="showPpt" :plan="plan" />
     <ReportSheet v-model="showReport" :plan="plan" />
     <MemorySheet v-model="showMemory" :plan="plan" :can-edit="canEdit" />
     <IssuesSheet v-model="showIssues" :plan="plan" />

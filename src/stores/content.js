@@ -514,14 +514,39 @@ export const useContentStore = defineStore('content', () => {
     }
   }
 
+  /** 调整某天目的地的顺序(dir: -1 上移 / 1 下移) */
+  async function moveDestination(planId, date, destId, dir) {
+    const day = findDay(planId, date)
+    if (!day) return
+    const list = [...(day.destinations || [])]
+    const i = list.findIndex((d) => d.id === destId)
+    const j = i + dir
+    if (i < 0 || j < 0 || j >= list.length) return
+    ;[list[i], list[j]] = [list[j], list[i]]
+    if (!isSupabase) {
+      await persistLocal(planId, 'days', (l) => {
+        const t = l.find((d) => d.date === date)
+        if (t) t.destinations = list
+      })
+    } else {
+      day.destinations = list
+      const { error } = await supabase
+        .from('route_days')
+        .update({ destinations: list })
+        .eq('plan_id', planId)
+        .eq('date', date)
+      if (error) console.warn('[content] 调整顺序失败:', error.message)
+    }
+  }
+
   // ------------------------------------------------------------
   // 食宿 / TODO / 攻略 / 提醒 —— 均为薄封装,走通用原语
   // ------------------------------------------------------------
   function addStay(planId, payload) {
     return remoteWrite(planId, 'stays', 'stays', {
       id: uid('stay'), plan_id: planId, type: 'stay',
-      name: '', address: '', phone: '', tags: [], booked: false, day: null,
-      assignee: null, votes: [], chosen: false, chosen_by: null, ...payload
+      name: '', address: '', phone: '', tags: [], booked: false, day: null, days: [],
+      link: '', assignee: null, votes: [], chosen: false, chosen_by: null, ...payload
     })
   }
 
@@ -614,7 +639,9 @@ export const useContentStore = defineStore('content', () => {
   async function chooseStay(planId, id, actor, chosen) {
     const row = (rows[planId]?.stays || []).find((s) => s.id === id)
     if (!row) return { ok: false, reason: 'gone' }
-    const date = dayDateByNum(planId, row.day)
+    const daysOf = (s) => (Array.isArray(s.days) && s.days.length ? s.days : s.day ? [s.day] : [])
+    const firstDay = daysOf(row)[0] ?? null
+    const date = dayDateByNum(planId, firstDay)
     if (chosen) {
       if (!date) return { ok: false, reason: 'no_day' }
       if (typeof row.latitude !== 'number' || typeof row.longitude !== 'number') {
@@ -644,10 +671,11 @@ export const useContentStore = defineStore('content', () => {
           }
         }
       }
-      // 取消同类型同天的其它选定,并移除其已同步地点
+      // 取消同类型同天(有交集)的其它选定,并移除其已同步地点
       for (const o of rows[planId]?.stays || []) {
-        if (o.type === row.type && o.day === row.day && o.chosen && o.id !== id) {
-          const od = dayDateByNum(planId, o.day)
+        const overlap = daysOf(o).some((n) => daysOf(row).includes(n))
+        if (o.type === row.type && overlap && o.chosen && o.id !== id) {
+          const od = dayDateByNum(planId, daysOf(o)[0])
           if (od) await removeSyncedDest(planId, od, (d) => d.stay_link === o.id)
           await remoteUpdate(planId, 'stays', 'stays', o.id, { chosen: false, chosen_by: null })
         }
@@ -925,14 +953,14 @@ export const useContentStore = defineStore('content', () => {
 
   /** 攻略评论 */
   function addGuideComment(planId, payload) {
-    return remoteWrite(planId, 'gcomments', 'gcomments', {
+    return remoteWrite(planId, TABLES.gcomments, 'gcomments', {
       id: uid('gc'), plan_id: planId, guide_id: null, text: '', author: null,
       ...payload, created_at: new Date().toISOString()
     })
   }
 
   function removeGuideComment(planId, id) {
-    return remoteDelete(planId, 'gcomments', 'gcomments', id)
+    return remoteDelete(planId, TABLES.gcomments, 'gcomments', id)
   }
 
   /** 当天 Plan B 预案(雨天/备选路线等) */
@@ -1222,6 +1250,7 @@ export const useContentStore = defineStore('content', () => {
     removeDestination,
     updateDayTitle,
     updateDestinationFields,
+    moveDestination,
     ensureDriveDayRows,
     addDriveLeg,
     updateDriveLeg,

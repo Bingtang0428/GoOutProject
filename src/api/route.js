@@ -121,6 +121,60 @@ export async function drivingMinutes(a, b, force = false) {
   return leg ? leg.min : null
 }
 
+/** 公共交通(公交/地铁/轮渡)真实路径;失败返回 null(由调用方退回估算) */
+export async function transitLeg(a, b, city = '') {
+  if (!a || !b || !a.lat || !a.lng || !b.lat || !b.lng || !isSupabase) return null
+  try {
+    const u = new URL('/api/transit', window.location.origin)
+    u.searchParams.set('from', `${a.lng},${a.lat}`)
+    u.searchParams.set('to', `${b.lng},${b.lat}`)
+    if (city) u.searchParams.set('city', city)
+    const res = await fetch(u.toString())
+    const j = await res.json()
+    if (!j?.ok) return null
+    return { min: j.min, km: j.km, cost: j.cost ?? 0, steps: Array.isArray(j.steps) ? j.steps : [] }
+  } catch {
+    return null
+  }
+}
+
+/** 步行真实路径;失败返回 null(由调用方退回估算) */
+export async function walkingLeg(a, b) {
+  if (!a || !b || !a.lat || !a.lng || !b.lat || !b.lng || !isSupabase) return null
+  try {
+    const u = new URL('/api/walking', window.location.origin)
+    u.searchParams.set('from', `${a.lng},${a.lat}`)
+    u.searchParams.set('to', `${b.lng},${b.lat}`)
+    const res = await fetch(u.toString())
+    const j = await res.json()
+    if (!j?.ok) return null
+    return { min: j.min, km: j.km, steps: Array.isArray(j.steps) ? j.steps : [] }
+  } catch {
+    return null
+  }
+}
+
+/** 步行估算(无代理时):按直线距离 1.3 倍、均速 5km/h */
+export function walkEstimate(a, b) {
+  const straight = distKm(a, b)
+  const km = Math.round(straight * 1.3 * 100) / 100
+  return { min: Math.max(1, Math.round((km / 5) * 60)), km }
+}
+
+/** 公共交通步骤 → 一句话摘要,如 “地铁10号线 → 步行 300m(约4分)” */
+export function fmtTransitSteps(steps) {
+  if (!Array.isArray(steps) || !steps.length) return ''
+  return steps
+    .map((s) => {
+      if (s.mode === 'WALK') return `步行${s.walk_m || 0}米`
+      const line = String(s.line || '公共交通').replace(/\(.*?\)/g, '').trim()
+      const to = s.to ? `→${s.to}` : ''
+      return `${line}${to}`
+    })
+    .join(' → ')
+}
+
+
 /** 公共交通时长估算(分钟):公交/高铁综合按“自驾×1.25+40 起步” */
 export function transitMinutes(drivingMin) {
   if (!drivingMin || drivingMin <= 0) return null

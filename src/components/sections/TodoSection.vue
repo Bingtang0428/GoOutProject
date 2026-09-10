@@ -65,12 +65,18 @@ const filtered = computed(() => {
 const doneCount = computed(() => todos.value.filter((t) => t.done).length)
 const pct = computed(() => (todos.value.length ? Math.round((doneCount.value / todos.value.length) * 100) : 0))
 
+const saving = ref(false)
 async function add() {
   const title = newTitle.value.trim()
-  if (!title) return
-  await store.addTodo(props.plan.id, { title, due: newDue.value || null, day: newDay.value })
-  toast('任务已添加')
-  showAdd.value = false
+  if (!title || saving.value) return
+  saving.value = true
+  try {
+    await store.addTodo(props.plan.id, { title, due: newDue.value || null, day: newDay.value })
+    toast('任务已添加')
+    showAdd.value = false
+  } finally {
+    saving.value = false
+  }
 }
 
 function openAdd() {

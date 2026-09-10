@@ -14,7 +14,7 @@ import { fmtDay, dayIndex, eachDayISO, parseISO } from '@/utils/date'
 import { uid, PASTEL_GRADS } from '@/utils/misc'
 import { geocodePlace, navUrl, wgs2gcj } from '@/api/geocode'
 import { fetchDailyWeather, wxMeta, wxTempText } from '@/api/weather'
-import { drivingLeg, transitMinutes, fmtMinute, fmtRoadsText } from '@/api/route'
+import { drivingLeg, transitMinutes, fmtMinute, fmtRoadsText, transitLeg, walkingLeg, walkEstimate, fmtTransitSteps } from '@/api/route'
 import { isSupabase } from '@/api/supabase'
 import BaseModal from '@/components/ui/BaseModal.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
@@ -173,7 +173,7 @@ async function coordOf(it) {
   return c
 }
 
-/** 自动计算“上一站 → 本站”的自驾与公交时长并写回;返回是否成功 */
+/** 自动计算“上一站 → 本站”的时长并写回;按该段的交通方式(自驾/公交/步行)计算 */
 async function autoCalcLeg(day, dest) {
   if (calcBusy[dest.id]) return false
   const items = flattenDests()
@@ -185,20 +185,46 @@ async function autoCalcLeg(day, dest) {
     const a = await coordOf(prevItem)
     const b = await coordOf({ di: idx, day, dest })
     if (!a || !b) return false
-    const leg = await drivingLeg(a, b)
-    const drive = leg?.min
-    const transit = transitMinutes(drive)
-    if (!drive) return false
-    await store.updateDestinationFields(props.plan.id, day.date, dest.id, {
-      drive_min: drive,
-      transit_min: transit,
-      distance_km: leg?.km ?? null,
-      // 真实路网折线与途经道路(云端高德路线;仅本地演示/高德不可用时为空)
-      drive_tolls: leg?.tolls ?? null,
-      drive_roads: leg?.roads || [],
-      drive_segs: leg?.segs || [],
-      drive_geo: leg?.geometry?.length ? leg.geometry : []
-    })
+    const mode = dest.mode || 'car'
+    const city = (props.plan.start_city || '').replace(/(市|省|自治区|特别行政区)$/, '')
+
+    if (mode === 'walk') {
+      let leg = await walkingLeg(a, b)
+      if (!leg) leg = walkEstimate(a, b)
+      await store.updateDestinationFields(props.plan.id, day.date, dest.id, {
+        walk_min: leg.min,
+        distance_km: leg.km,
+        leg_detail: leg.steps || [],
+        leg_estimated: !leg.steps?.length
+      })
+    } else if (mode === 'transit') {
+      let leg = await transitLeg(a, b, city)
+      if (!leg) {
+        // 无真实公交数据 → 退回自驾 × 系数估算,并标注
+        const drv = await drivingLeg(a, b)
+        if (!drv?.min) return false
+        leg = { min: transitMinutes(drv.min), km: drv.km ?? null, steps: [], cost: 0, estimated: true }
+      }
+      await store.updateDestinationFields(props.plan.id, day.date, dest.id, {
+        transit_min: leg.min,
+        distance_km: leg.km,
+        transit_detail: leg.steps || [],
+        transit_cost: leg.cost || 0,
+        leg_estimated: !!leg.estimated
+      })
+    } else {
+      const leg = await drivingLeg(a, b)
+      if (!leg?.min) return false
+      await store.updateDestinationFields(props.plan.id, day.date, dest.id, {
+        drive_min: leg.min,
+        transit_min: dest.transit_min ?? transitMinutes(leg.min),
+        distance_km: leg.km ?? null,
+        drive_tolls: leg.tolls ?? null,
+        drive_roads: leg.roads || [],
+        drive_segs: leg.segs || [],
+        drive_geo: leg.geometry?.length ? leg.geometry : []
+      })
+    }
     if (view.value === 'map') drawSegments() // 地图同步刷新路段
     return true
   } catch {
@@ -206,6 +232,28 @@ async function autoCalcLeg(day, dest) {
   } finally {
     delete calcBusy[dest.id]
   }
+}
+
+/** 该目的地是否已算好当前方式的时长 */
+function hasLeg(d) {
+  const m = d.mode || 'car'
+  if (m === 'walk') return Boolean(d.walk_min)
+  if (m === 'transit') return Boolean(d.transit_min)
+  return Boolean(d.drive_min)
+}
+
+/** 切换交通方式后立即重算 */
+async function setMode(day, dest, mode) {
+  if (dest.mode === mode) return
+  await store.updateDestinationFields(props.plan.id, day.date, dest.id, { mode })
+  dest.mode = mode
+  await autoCalcLeg(day, dest)
+}
+
+/** 调整目的地顺序(上移/下移) */
+async function moveDest(day, dest, dir) {
+  await store.moveDestination(props.plan.id, day.date, dest.id, dir)
+  if (view.value === 'map') drawSegments()
 }
 
 /** 进入计划后自动优先计算缺失路段时长;遗留未算的会小规模重试几轮 */
@@ -223,12 +271,12 @@ function scheduleAutoDurations() {
     let fail = 0
     for (let i = 1; i < items.length; i++) {
       const it = items[i]
-      if (it.dest.drive_min && it.dest.transit_min) continue
+      if (hasLeg(it.dest)) continue
       ;(await autoCalcLeg(it.day, it.dest)) ? done++ : fail++
       await new Promise((r) => setTimeout(r, 220)) // 温和限速,避免触发风控
     }
     autoRun.value = false
-    const left = flattenDests().filter((it) => !(it.dest.drive_min && it.dest.transit_min))
+    const left = flattenDests().filter((it) => !hasLeg(it.dest))
     if (done || fail) {
       legNote.value = done
         ? `已自动算好 ${done} 段路程时长` + (fail ? `,有 ${fail} 段暂无法定位` : '')
@@ -575,8 +623,9 @@ onBeforeUnmount(() => {
 
 /* ---------------- 添加 / 校正 目的地 ---------------- */
 const showAdd = ref(false)
+const savingDest = ref(false)
 const destEdit = ref(null) // {day, dest} | null(null=新增)
-const destForm = reactive({ date: '', geo: null, time: '', note: '', driveMin: '' })
+const destForm = reactive({ date: '', geo: null, time: '', note: '', driveMin: '', mode: 'car' })
 
 function openAdd(date) {
   destEdit.value = null
@@ -585,6 +634,7 @@ function openAdd(date) {
   destForm.time = ''
   destForm.note = ''
   destForm.driveMin = ''
+  destForm.mode = 'car'
   showAdd.value = true
 }
 
@@ -599,6 +649,7 @@ function openDestEdit(day, dest) {
   destForm.time = dest.time || ''
   destForm.note = dest.note || ''
   destForm.driveMin = dest.drive_min || ''
+  destForm.mode = dest.mode || 'car'
   showAdd.value = true
 }
 
@@ -609,28 +660,34 @@ function chooseFirstFreeDay() {
 
 async function saveDest() {
   const place = destForm.geo?.name?.trim()
-  if (!place || !destForm.date) return
-  const patch = {
-    place,
-    time: destForm.time || '',
-    note: destForm.note.trim(),
-    drive_min: destForm.driveMin ? Number(destForm.driveMin) : null,
-    lat: destForm.geo.lat ?? null,
-    lng: destForm.geo.lng ?? null
-  }
-  if (destEdit.value) {
-    // 校正模式:直接更新该地点(含坐标)
-    await store.updateDestinationFields(props.plan.id, destEdit.value.day.date, destEdit.value.dest.id, patch)
-    destEdit.value = null
+  if (!place || !destForm.date || savingDest.value) return
+  savingDest.value = true
+  try {
+    const patch = {
+      place,
+      time: destForm.time || '',
+      note: destForm.note.trim(),
+      drive_min: destForm.driveMin ? Number(destForm.driveMin) : null,
+      mode: destForm.mode,
+      lat: destForm.geo.lat ?? null,
+      lng: destForm.geo.lng ?? null
+    }
+    if (destEdit.value) {
+      // 校正模式:直接更新该地点(含坐标)
+      await store.updateDestinationFields(props.plan.id, destEdit.value.day.date, destEdit.value.dest.id, patch)
+      destEdit.value = null
+      showAdd.value = false
+      return
+    }
+    // 新增:先落库地点与坐标(自动算时长会基于确认过的坐标,不再猜)
+    const destId = uid('x')
+    await store.addDestination(props.plan.id, destForm.date, { id: destId, ...patch })
     showAdd.value = false
-    return
+    const item = flattenDests().find((it) => it.dest.id === destId)
+    if (item && props.canEdit) autoCalcLeg(item.day, item.dest)
+  } finally {
+    savingDest.value = false
   }
-  // 新增:先落库地点与坐标(自动算时长会基于确认过的坐标,不再猜)
-  const destId = uid('x')
-  await store.addDestination(props.plan.id, destForm.date, { id: destId, ...patch })
-  showAdd.value = false
-  const item = flattenDests().find((it) => it.dest.id === destId)
-  if (item && props.canEdit) autoCalcLeg(item.day, item.dest)
 }
 
 async function onTitleChange(day, e) {
@@ -986,7 +1043,7 @@ watch(
             </div>
 
             <div v-if="day.destinations?.length" class="divide-y divide-line/60">
-              <div v-for="d in day.destinations" :key="d.id">
+              <div v-for="(d, di) in day.destinations" :key="d.id">
                 <div class="grid grid-cols-[64px_1fr] items-start gap-x-3 px-6 py-3 transition-colors duration-200 sm:grid-cols-[72px_1fr_auto] hover:bg-surface-2/60">
                   <span class="pt-0.5 text-[12.5px] font-semibold text-primary/80 tabular-nums">
                     {{ d.time || '全天' }}
@@ -997,9 +1054,23 @@ watch(
                       {{ d.place }}
                     </p>
                     <p v-if="d.note" class="mt-0.5 text-[12.5px] leading-relaxed text-muted">{{ d.note }}</p>
-                    <!-- 路段时长:自驾 / 公交,支持手动填写或「自动计算」 -->
-                    <div v-if="canEdit" class="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
-                      <span class="inline-flex items-center gap-1" title="从上一站自驾到这里大约多少分钟">
+                    <!-- 交通方式:自驾 / 公交 / 步行,并展示详细行程 -->
+                    <div v-if="canEdit" class="mt-1.5 flex flex-wrap items-center gap-1.5">
+                      <button
+                        v-for="m in [
+                          { key: 'car', icon: 'fa-car-side', label: '自驾' },
+                          { key: 'transit', icon: 'fa-bus-simple', label: '公交' },
+                          { key: 'walk', icon: 'fa-person-walking', label: '步行' }
+                        ]"
+                        :key="m.key"
+                        type="button"
+                        class="chip !px-2 !py-0.5 !text-[11px] transition-all duration-150 active:scale-95"
+                        :class="(d.mode || 'car') === m.key ? 'chip-brand' : 'chip-plain opacity-70'"
+                        @click="setMode(day, d, m.key)"
+                      >
+                        <i :class="`fa-solid ${m.icon}`" aria-hidden="true"></i>{{ m.label }}
+                      </button>
+                      <span v-if="(d.mode || 'car') === 'car'" class="inline-flex items-center gap-1" title="从上一站自驾到这里大约多少分钟">
                         <i class="fa-solid fa-car-side text-[10px] text-primary/50" aria-hidden="true"></i>
                         <input
                           type="number"
@@ -1011,7 +1082,7 @@ watch(
                         />
                         <span class="unit-suffix">分</span>
                       </span>
-                      <span class="inline-flex items-center gap-1" title="公共交通大约多少分钟(自动为估算值)">
+                      <span v-else-if="d.mode === 'transit'" class="inline-flex items-center gap-1" title="公共交通大约多少分钟">
                         <i class="fa-solid fa-bus-simple text-[10px] text-amber/80" aria-hidden="true"></i>
                         <input
                           type="number"
@@ -1023,20 +1094,56 @@ watch(
                         />
                         <span class="unit-suffix">分</span>
                       </span>
+                      <span v-else class="inline-flex items-center gap-1" title="步行大约多少分钟">
+                        <i class="fa-solid fa-person-walking text-[10px] text-primary/60" aria-hidden="true"></i>
+                        <input
+                          type="number"
+                          min="1"
+                          class="drive-min-input"
+                          :value="d.walk_min ?? ''"
+                          placeholder="未填"
+                          @change="(e) => store.updateDestinationFields(plan.id, day.date, d.id, { walk_min: e.target.value ? Number(e.target.value) : null })"
+                        />
+                        <span class="unit-suffix">分</span>
+                      </span>
                       <button
                         class="btn btn-soft btn-sm !px-2.5 !py-0.5 !text-[11px]"
-                        title="按地图路线自动计算自驾时长,并估算公交时长"
+                        title="按所选交通方式自动计算路程与时长"
                         @click="autoCalcLeg(day, d)"
                       >
-                        <i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i>自动算时长
+                        <i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i>算路程
                       </button>
                     </div>
-                    <p v-else-if="d.drive_min || d.transit_min" class="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11.5px] text-muted/80">
+                    <!-- 公交详细行程(地铁/公交/轮渡/步行接驳) -->
+                    <p
+                      v-if="d.mode === 'transit' && (d.transit_detail?.length || d.transit_min)"
+                      class="mt-1 flex items-start gap-1.5 text-[11.5px] leading-5 text-ink-soft"
+                    >
+                      <i class="fa-solid fa-route mt-0.5 text-[10px] text-primary/60" aria-hidden="true"></i>
+                      <span>
+                        <template v-if="d.transit_detail?.length">{{ fmtTransitSteps(d.transit_detail) }}</template>
+                        <template v-else>约 {{ d.distance_km || '?' }} km(估算)</template>
+                        <template v-if="d.transit_cost"> · 票价约 ¥{{ d.transit_cost }}</template>
+                      </span>
+                    </p>
+                    <!-- 步行距离与时长 -->
+                    <p
+                      v-else-if="d.mode === 'walk' && d.walk_min"
+                      class="mt-1 flex items-center gap-1.5 text-[11.5px] text-ink-soft"
+                    >
+                      <i class="fa-solid fa-person-walking text-[10px] text-primary/60" aria-hidden="true"></i>
+                      步行全程约 {{ d.distance_km }} km · 约 {{ fmtMinute(d.walk_min) }}
+                    </p>
+                    <!-- 只读展示 -->
+                    <p v-else-if="!canEdit && (d.drive_min || d.transit_min || d.walk_min)" class="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11.5px] text-muted/80">
                       <template v-if="d.drive_min">
                         <span><i class="fa-solid fa-car-side text-[10px]" aria-hidden="true"></i> 自驾约 {{ fmtMinute(d.drive_min) }}</span>
                       </template>
                       <template v-if="d.transit_min">
                         <span><i class="fa-solid fa-bus-simple text-[10px]" aria-hidden="true"></i> 公交约 {{ fmtMinute(d.transit_min) }}</span>
+                      </template>
+                      <template v-if="d.walk_min">
+                        <span><i class="fa-solid fa-person-walking text-[10px]" aria-hidden="true"></i> 步行约 {{ fmtMinute(d.walk_min) }}</span>
                       </template>
                     </p>
                     <!-- 换手 / 司机安排 -->
@@ -1076,6 +1183,14 @@ watch(
                     </div>
                   </div>
                   <div class="col-span-2 flex items-center gap-1 pt-1 pl-[76px] sm:col-span-1 sm:pl-0 sm:pt-0">
+                    <template v-if="canEdit">
+                      <button class="icon-btn !h-7 !w-7" title="上移" :disabled="di === 0" :class="di === 0 ? 'opacity-30' : ''" @click="moveDest(day, d, -1)">
+                        <i class="fa-solid fa-arrow-up text-[11px]" aria-hidden="true"></i>
+                      </button>
+                      <button class="icon-btn !h-7 !w-7" title="下移" :disabled="di === day.destinations.length - 1" :class="di === day.destinations.length - 1 ? 'opacity-30' : ''" @click="moveDest(day, d, 1)">
+                        <i class="fa-solid fa-arrow-down text-[11px]" aria-hidden="true"></i>
+                      </button>
+                    </template>
                     <button v-if="canEdit" class="icon-btn !h-7 !w-7" title="校正精确定位" @click="openDestEdit(day, d)">
                       <i class="fa-solid fa-location-crosshairs text-[11px]" aria-hidden="true"></i>
                     </button>
@@ -1238,6 +1353,25 @@ watch(
           <label class="flabel">备注</label>
           <textarea v-model="destForm.note" class="field" rows="3" placeholder="停车建议 / 门票提醒 / 同伴任务…"></textarea>
         </div>
+        <div>
+          <label class="flabel">到这里的交通方式</label>
+          <div class="flex gap-2">
+            <button
+              v-for="m in [
+                { key: 'car', icon: 'fa-car-side', label: '自驾' },
+                { key: 'transit', icon: 'fa-bus-simple', label: '公共交通' },
+                { key: 'walk', icon: 'fa-person-walking', label: '步行' }
+              ]"
+              :key="m.key"
+              type="button"
+              class="chip cursor-pointer !px-4 !py-2 transition-all duration-200 ease-out active:scale-95"
+              :class="destForm.mode === m.key ? 'chip-brand' : 'chip-plain'"
+              @click="destForm.mode = m.key"
+            >
+              <i :class="`fa-solid ${m.icon}`" aria-hidden="true"></i>{{ m.label }}
+            </button>
+          </div>
+        </div>
         <div class="grid grid-cols-2 gap-4">
           <div>
             <label class="flabel">自驾路段(距上一站,分钟)</label>
@@ -1251,7 +1385,7 @@ watch(
       </div>
       <template #footer>
         <BaseButton variant="ghost" @click="showAdd = false">取消</BaseButton>
-        <BaseButton icon="fa-check" :disabled="!(destForm.geo?.name || '').trim()" @click="saveDest">
+        <BaseButton icon="fa-check" :disabled="!(destForm.geo?.name || '').trim()" :loading="savingDest" @click="saveDest">
           {{ destEdit ? '保存校正' : '加入行程' }}
         </BaseButton>
       </template>

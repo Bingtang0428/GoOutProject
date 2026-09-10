@@ -8,7 +8,7 @@ import { useContentStore } from '@/stores/content'
 import { useAuthStore } from '@/stores/auth'
 import { isSupabase, storageUrl, uploadCover } from '@/api/supabase'
 import { fetchLinkMeta } from '@/api/metadata'
-import { hostOf } from '@/utils/misc'
+import { hostOf, PASTEL_GRADS } from '@/utils/misc'
 import { fmtSavedAt } from '@/utils/date'
 import BaseModal from '@/components/ui/BaseModal.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
@@ -26,6 +26,15 @@ const auth = useAuthStore()
 
 const guides = computed(() => store.rowsOf(props.plan.id, 'guides'))
 
+/** 无封面时按标题稳定生成一张渐变封面 */
+function coverGrad(g) {
+  const s = String(g.id || g.title || '')
+  let h = 0
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0
+  const [a, b] = PASTEL_GRADS[h % PASTEL_GRADS.length]
+  return `linear-gradient(135deg, ${a}, ${b})`
+}
+
 /* ---- 攻略评论 ---- */
 const gcomments = computed(() => store.rowsOf(props.plan.id, 'gcomments'))
 const openCmt = ref(null) // guideId | null
@@ -33,15 +42,24 @@ const draftCmt = reactive({})
 const commentsOf = (gid) =>
   gcomments.value.filter((c) => c.guide_id === gid).sort((a, b) => a.created_at.localeCompare(b.created_at))
 
+const posting = ref(null)
 async function postComment(gid) {
   const text = (draftCmt[gid] || '').trim()
-  if (!text) return
-  await store.addGuideComment(props.plan.id, {
-    guide_id: gid,
-    text,
-    author: auth.user ? { id: auth.user.id, name: auth.user.name } : null
-  })
-  draftCmt[gid] = ''
+  if (!text || posting.value) return
+  posting.value = gid
+  try {
+    await store.addGuideComment(props.plan.id, {
+      guide_id: gid,
+      text,
+      author: auth.user ? { id: auth.user.id, name: auth.user.name } : null
+    })
+    draftCmt[gid] = ''
+  } catch (e) {
+    toast('评论发送失败,请稍后重试')
+    console.warn('[guide] 评论失败', e)
+  } finally {
+    posting.value = null
+  }
 }
 
 function canRemoveCmt(c) {
@@ -103,7 +121,7 @@ function onPickFile(e) {
 }
 
 async function save() {
-  if (!form.title.trim() || !form.url.trim()) return
+  if (!form.title.trim() || !form.url.trim() || form.uploading) return
   form.uploading = true
   let image = form.image
   try {
@@ -165,10 +183,10 @@ async function save() {
           </a>
           <div
             v-else
-            class="visual flex h-36 items-center justify-center"
-            style="--vg1: #e8edff; --vg2: #dbe4ff"
+            class="flex h-40 items-center justify-center p-5 text-center"
+            :style="{ background: coverGrad(g) }"
           >
-            <i class="fa-regular fa-bookmark text-3xl text-primary/50" aria-hidden="true"></i>
+            <span class="line-clamp-3 text-[16px] font-bold leading-snug" style="color: #5a2b3b">{{ g.title }}</span>
           </div>
 
           <div class="p-5">
@@ -234,7 +252,7 @@ async function save() {
                     maxlength="200"
                     @keyup.enter="postComment(g.id)"
                   />
-                  <BaseButton size="sm" :disabled="!(draftCmt[g.id] || '').trim()" @click="postComment(g.id)">发送</BaseButton>
+                  <BaseButton size="sm" :disabled="!(draftCmt[g.id] || '').trim()" :loading="posting === g.id" @click="postComment(g.id)">发送</BaseButton>
                 </div>
               </div>
             </Transition>

@@ -43,6 +43,26 @@ export function gcj2wgs(lat, lng) {
   return { lat: wLat, lng: wLng }
 }
 
+/** 带超时与重试的 fetch(高德代理偶发抖动时更稳) */
+async function fetchJson(url, { retries = 2, timeout = 8000 } = {}) {
+  let lastErr = null
+  for (let i = 0; i <= retries; i++) {
+    const ctrl = new AbortController()
+    const t = setTimeout(() => ctrl.abort(), timeout)
+    try {
+      const res = await fetch(url, { signal: ctrl.signal, cache: 'no-store' })
+      clearTimeout(t)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      return await res.json()
+    } catch (e) {
+      clearTimeout(t)
+      lastErr = e
+      if (i < retries) await new Promise((r) => setTimeout(r, 300 * (i + 1)))
+    }
+  }
+  throw lastErr || new Error('request failed')
+}
+
 /**
  * 精确选点(高德 POI):返回候选列表,失败返回 []
  * @param {string} raw
@@ -53,14 +73,19 @@ export async function searchPlaces(raw, hint = '') {
   if (!q || q.length < 2) return []
   if (!isSupabase) return [] // 本地演示:无高德代理,不猜测
   try {
-    const res = await fetch(proxyUrl('place', q, hint))
-    const j = await res.json()
+    // 先带城市消歧;无结果时去掉城市再搜一次(避免城市名限制过死导致空结果)
+    let j = await fetchJson(proxyUrl('place', q, hint))
+    if ((!j?.ok || !j.candidates?.length) && hint) {
+      j = await fetchJson(proxyUrl('place', q, ''))
+    }
     if (j?.ok && Array.isArray(j.candidates)) {
       // 高德坐标为 GCJ-02 → 统一转 WGS84 后返回
-      return j.candidates.map((c) => {
-        const w = gcj2wgs(c.lat, c.lng)
-        return { ...c, lat: w.lat, lng: w.lng }
-      }).slice(0, 8)
+      return j.candidates
+        .map((c) => {
+          const w = gcj2wgs(c.lat, c.lng)
+          return { ...c, lat: w.lat, lng: w.lng }
+        })
+        .slice(0, 10)
     }
     return []
   } catch {
@@ -81,8 +106,7 @@ export async function geocodePlace(raw, opts = {}) {
   if (cache.has(key)) return cache.get(key)
   if (!isSupabase) return null
   try {
-    const res = await fetch(proxyUrl('geo', q, opts.hint || ''))
-    const j = await res.json()
+    const j = await fetchJson(proxyUrl('geo', q, opts.hint || ''))
     if (j?.ok && j.location?.lat != null && j.location?.lng != null) {
       const w = gcj2wgs(j.location.lat, j.location.lng)
       cache.set(key, w)

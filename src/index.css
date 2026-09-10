@@ -427,19 +427,24 @@ select.field { appearance: none; }
 @media print {
   @page { size: A4; margin: 12mm; }
   body { background: #fff !important; }
-  body * { visibility: hidden !important; }
-  #export-sheet, #export-sheet * { visibility: visible !important; }
-  /* 展开弹窗布局,让长行程单按页流动 */
-  .modal-mask {
+  /* 只保留导出弹窗:其余顶层节点直接 display:none,避免隐藏元素占位产生空白页 */
+  body > * { display: none !important; }
+  body > .export-mask { display: block !important; }
+  .export-mask {
     position: static !important;
     inset: auto !important;
     overflow: visible !important;
     background: #fff !important;
     padding: 0 !important;
   }
-  .modal-mask > .card,
-  .modal-mask .card > div,
-  .modal-mask [class*="overflow"] {
+  .export-mask .card {
+    display: block !important;
+    max-height: none !important;
+    overflow: visible !important;
+    box-shadow: none !important;
+    border: none !important;
+  }
+  .export-mask [class*='overflow'] {
     max-height: none !important;
     overflow: visible !important;
   }

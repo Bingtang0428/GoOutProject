@@ -135,7 +135,7 @@ onMounted(async () => {
 /* ---------- 生成邀请码 ---------- */
 const showGen = ref(false)
 const genRole = ref('member') // admin | member | viewer
-const genPlanId = ref('')
+const genGrants = ref([]) // [{ plan_id, role }] 支持多计划 + 每计划角色
 const genLabel = ref('')
 const genCode = ref('')
 const genMaxUses = ref(1) // 1-100
@@ -148,7 +148,7 @@ function randCode(role) {
 
 function openGen() {
   genRole.value = 'member'
-  genPlanId.value = plansStore.plans[0]?.id || ''
+  genGrants.value = [{ plan_id: plansStore.plans[0]?.id || '', role: 'member' }]
   genLabel.value = ''
   genMaxUses.value = 1
   genCode.value = randCode('member')
@@ -156,9 +156,19 @@ function openGen() {
 }
 
 function onGenRoleChange() {
-  if (genRole.value !== 'admin') genPlanId.value = plansStore.plans[0]?.id || ''
-  else genPlanId.value = ''
+  if (genRole.value === 'admin') genGrants.value = []
+  else if (!genGrants.value.length) {
+    genGrants.value = [{ plan_id: plansStore.plans[0]?.id || '', role: genRole.value }]
+  }
   genCode.value = randCode(genRole.value)
+}
+
+function addGrant() {
+  genGrants.value.push({ plan_id: plansStore.plans[0]?.id || '', role: genRole.value === 'viewer' ? 'viewer' : 'member' })
+}
+
+function removeGrant(i) {
+  genGrants.value.splice(i, 1)
 }
 
 function usesValue() {
@@ -167,18 +177,26 @@ function usesValue() {
 }
 
 async function createCode() {
-  if (genRole.value !== 'admin' && !genPlanId.value) {
-    msg.value = '成员/围观邀请码需要选择对应的计划'
-    return
+  if (genRole.value !== 'admin') {
+    const grants = genGrants.value.filter((g) => g.plan_id)
+    if (!grants.length) {
+      msg.value = '成员/围观邀请码至少需要选择一个计划'
+      return
+    }
+    // 同一计划只保留一条
+    const seen = new Set()
+    genGrants.value = grants.filter((g) => (seen.has(g.plan_id) ? false : (seen.add(g.plan_id), true)))
   }
   genBusy.value = true
   msg.value = ''
   try {
+    const grants = genRole.value === 'admin' ? [] : genGrants.value.filter((g) => g.plan_id)
     const { error } = await supabase.from('invite_codes').insert({
       id: makeUuid(),
       code: genCode.value,
       role: genRole.value,
-      plan_id: genRole.value === 'admin' ? null : genPlanId.value,
+      plan_id: genRole.value === 'admin' ? null : grants[0]?.plan_id || null,
+      grants,
       label: genLabel.value.trim(),
       max_uses: usesValue(),
       use_count: 0,
@@ -216,6 +234,20 @@ const addAs = ref('participant') // participant | viewer
 
 const planById = (id) => plansStore.plans.find((p) => p.id === id)
 
+/** 邀请码绑定的计划与角色(兼容旧的单计划字段) */
+function codePlans(c) {
+  const grants =
+    Array.isArray(c.grants) && c.grants.length
+      ? c.grants
+      : c.plan_id
+        ? [{ plan_id: c.plan_id, role: c.role }]
+        : []
+  return grants.map((g) => ({
+    name: planById(g.plan_id)?.name || '计划已删除',
+    role: g.role
+  }))
+}
+
 const ROLE_TAG = {
   admin: { text: '管理员', cls: 'chip-brand' },
   member: { text: '参与者', cls: 'chip-success' },
@@ -225,8 +257,11 @@ const ROLE_TAG = {
 async function addPerson() {
   const name = addName.value.trim()
   if (!name || !managePlan.value) return
-  if (addAs.value === 'viewer') await plansStore.inviteViewer(managePlan.value.id, name)
-  else await plansStore.inviteParticipant(managePlan.value.id, name)
+  // 优先复用已注册账号的 id,避免每次添加都新建一个"幽灵成员"
+  const acc = accounts.value.find((a) => a.name === name)
+  const person = acc ? { id: acc.id, name: acc.name } : name
+  if (addAs.value === 'viewer') await plansStore.inviteViewer(managePlan.value.id, person)
+  else await plansStore.inviteParticipant(managePlan.value.id, person)
   addName.value = ''
 }
 
@@ -296,7 +331,9 @@ async function deletePlan(plan) {
             <div v-for="c in codes" :key="c.id" class="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-[12px] bg-surface-2/60 px-4 py-3">
               <code class="font-mono text-[13px] font-bold text-ink">{{ c.code }}</code>
               <span class="chip" :class="ROLE_TAG[c.role]?.cls || 'chip-plain'">{{ ROLE_TAG[c.role]?.text }}</span>
-              <span v-if="c.plan_id" class="chip chip-plain">{{ planById(c.plan_id)?.name || '计划已删除' }}</span>
+              <span v-for="(pl, pi) in codePlans(c)" :key="pi" class="chip chip-plain">
+                {{ pl.name }} · {{ ROLE_TAG[pl.role]?.text || pl.role }}
+              </span>
               <span v-if="c.label" class="muted text-[12px]">{{ c.label }}</span>
               <span class="chip chip-plain">
                 使用 {{ c.use_count || 0 }}/{{ c.max_uses ?? 1 }}
@@ -447,10 +484,41 @@ async function deletePlan(plan) {
           </div>
         </div>
         <div v-if="genRole !== 'admin'">
-          <label class="flabel">绑定计划</label>
-          <select v-model="genPlanId" class="field">
-            <option v-for="p in plansStore.plans" :key="p.id" :value="p.id">{{ p.name }}</option>
-          </select>
+          <label class="flabel">绑定计划与角色(可多选,每个计划可设不同角色)</label>
+          <div class="space-y-2">
+            <div v-for="(g, i) in genGrants" :key="i" class="flex flex-wrap items-center gap-2">
+              <select v-model="g.plan_id" class="field !w-auto min-w-[10rem] flex-1">
+                <option v-for="p in plansStore.plans" :key="p.id" :value="p.id">{{ p.name }}</option>
+              </select>
+              <div class="flex gap-1">
+                <button
+                  type="button"
+                  class="chip !px-3 !py-2"
+                  :class="g.role === 'member' ? 'chip-brand' : 'chip-plain'"
+                  @click="g.role = 'member'"
+                >参与者</button>
+                <button
+                  type="button"
+                  class="chip !px-3 !py-2"
+                  :class="g.role === 'viewer' ? 'chip-brand' : 'chip-plain'"
+                  @click="g.role = 'viewer'"
+                >围观者</button>
+              </div>
+              <button class="icon-btn icon-btn-danger !h-8 !w-8" title="移除" @click="removeGrant(i)">
+                <i class="fa-solid fa-xmark text-[11px]" aria-hidden="true"></i>
+              </button>
+            </div>
+            <button
+              type="button"
+              class="btn btn-ghost btn-sm"
+              @click="addGrant"
+            >
+              <i class="fa-solid fa-plus" aria-hidden="true"></i>再加一个计划
+            </button>
+          </div>
+          <p class="muted mt-1.5 text-[11.5px]">
+            <i class="fa-solid fa-circle-info mr-1" aria-hidden="true"></i>用此码注册的新账号会自动加入以上全部计划,并按各自角色授权
+          </p>
         </div>
         <div>
           <label class="flabel">可用次数(1-100)</label>

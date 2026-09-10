@@ -10,6 +10,7 @@ import { useContentStore } from '@/stores/content'
 import { fmtDay, fmtRange, fmtSavedAt, todayISO, relKey } from '@/utils/date'
 import { pastelOf } from '@/utils/misc'
 import { money as fmtMoney } from '@/utils/money'
+import { fmtTransitSteps } from '@/api/route'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -86,13 +87,43 @@ async function downloadPng() {
       backgroundColor: '#fff',
       scale: Math.min(2, window.devicePixelRatio || 1),
       useCORS: true,
+      allowTaint: false,
       logging: false,
-      windowWidth: 900
+      windowWidth: Math.min(900, document.documentElement.clientWidth || 900)
     })
-    const a = document.createElement('a')
-    a.download = `${props.plan.name || '行程单'}.png`
-    a.href = canvas.toDataURL('image/png')
-    a.click()
+    const filename = `${props.plan.name || '行程单'}.png`
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'))
+    if (blob) {
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.download = filename
+      a.href = url
+      a.style.display = 'none'
+      document.body.appendChild(a)
+      a.click()
+      setTimeout(() => {
+        document.body.removeChild(a)
+        URL.revokeObjectURL(url)
+      }, 1500)
+    } else {
+      // 兜底:新窗口打开图片,长按/右键保存(iOS 更稳)
+      const dataUrl = canvas.toDataURL('image/png')
+      const win = window.open('', '_blank')
+      if (win) {
+        win.document.write(
+          `<title>${filename}</title><img src="${dataUrl}" style="max-width:100%" alt="行程单" />`
+        )
+        win.document.close()
+      } else {
+        const a = document.createElement('a')
+        a.download = filename
+        a.href = dataUrl
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+      }
+      notice.value = '已在新窗口打开长图,长按图片即可保存到相册。'
+    }
   } catch (e) {
     notice.value = '长图生成失败(可能因外链图片跨域),可改用「另存为 PDF」。'
     console.warn('[export]', e)
@@ -115,7 +146,7 @@ const grad = computed(() => {
 <template>
   <Teleport to="body">
     <Transition name="modal-mask">
-      <div v-if="modelValue" class="modal-mask fixed inset-0 z-[90] flex items-center justify-center p-3 sm:p-6">
+      <div v-if="modelValue" class="modal-mask export-mask fixed inset-0 z-[90] flex items-center justify-center p-3 sm:p-6">
         <Transition name="modal-panel">
           <div class="card flex max-h-[94dvh] w-full max-w-[860px] flex-col overflow-hidden">
             <!-- 顶栏:打印时隐藏 -->
@@ -158,6 +189,15 @@ const grad = computed(() => {
                   <h2 class="print-h2">一、集合交通</h2>
                   <p class="print-note">大家从不同城市出发,先抵达起点再同行</p>
                   <table class="print-table">
+                    <thead>
+                      <tr>
+                        <th class="w-20">方向</th>
+                        <th class="w-14">日期</th>
+                        <th>成员</th>
+                        <th>行程</th>
+                        <th class="w-28">班次/航班</th>
+                      </tr>
+                    </thead>
                     <tbody>
                       <tr v-for="t in upcomingOpen" :key="t.id">
                         <td class="w-20">{{ t.direction === 'in' ? '到达' : '离开' }}</td>
@@ -180,8 +220,10 @@ const grad = computed(() => {
                   <p v-if="d.destinations?.length" class="mb-1">
                     <span v-for="(x, i) in d.destinations" :key="x.id" class="print-dest">
                       {{ x.time || '全天' }} {{ x.place }}
-                      <template v-if="x.drive_min">(自驾约 {{ x.drive_min }} 分钟)</template>
-                      <template v-if="x.transit_min">(公交约 {{ x.transit_min }} 分钟)</template>
+                      <template v-if="x.mode === 'walk' && x.walk_min">(步行约 {{ x.walk_min }} 分钟<template v-if="x.distance_km"> · {{ x.distance_km }}km</template>)</template>
+                      <template v-else-if="x.mode === 'transit' && x.transit_detail?.length">({{ fmtTransitSteps(x.transit_detail) }})</template>
+                      <template v-else-if="x.transit_min">(公交约 {{ x.transit_min }} 分钟)</template>
+                      <template v-else-if="x.drive_min">(自驾约 {{ x.drive_min }} 分钟)</template>
                       <template v-if="i < d.destinations.length - 1"> → </template>
                     </span>
                   </p>
@@ -207,6 +249,14 @@ const grad = computed(() => {
                 <template v-if="stays.length">
                   <h2 class="print-h2">三、食宿安排</h2>
                   <table class="print-table">
+                    <thead>
+                      <tr>
+                        <th class="w-14">类型</th>
+                        <th>名称</th>
+                        <th>地址</th>
+                        <th class="w-16">预订</th>
+                      </tr>
+                    </thead>
                     <tbody>
                       <tr v-for="s in stays" :key="s.id">
                         <td class="w-14">{{ s.type === 'food' ? '餐厅' : '住宿' }}</td>
@@ -283,7 +333,7 @@ const grad = computed(() => {
             <!-- 底部操作:打印时隐藏 -->
             <footer class="no-print flex flex-wrap items-center justify-between gap-3 border-t border-line/70 px-6 py-4">
               <p v-if="notice" class="muted text-[12px]">{{ notice }}</p>
-              <p v-else class="muted text-[12px]">共 {{ days.length }} 天 · {{ stays.length }} 住宿安排 · {{ openTodos.length }} 项待办</p>
+              <p v-else class="muted text-[12px]">共 {{ days.length }} 天 · {{ stays.filter((s) => s.type !== 'food').length }} 住宿安排 · {{ openTodos.length }} 项待办</p>
               <div class="flex items-center gap-2">
                 <button class="btn btn-ghost" @click="doPrint">
                   <i class="fa-solid fa-file-pdf" aria-hidden="true"></i>另存为 PDF
@@ -329,7 +379,16 @@ const grad = computed(() => {
   padding: 6px 8px;
   vertical-align: top;
 }
-.print-table tbody tr:first-child td { background: #fdf4f8; font-weight: 700; color: #b75973; }
+.print-table thead th {
+  border: 1px solid #f0dbe4;
+  padding: 6px 8px;
+  text-align: left;
+  background: #fdf4f8;
+  font-weight: 700;
+  color: #b75973;
+}
+/* 无表头的表格:沿用「首行高亮」样式 */
+.print-table:not(:has(thead)) tbody tr:first-child td { background: #fdf4f8; font-weight: 700; color: #b75973; }
 .print-footer {
   margin-top: 30px;
   text-align: center;
