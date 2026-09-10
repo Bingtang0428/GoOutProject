@@ -581,31 +581,44 @@ export const useContentStore = defineStore('content', () => {
     await writeDayRow(planId, date, { destinations })
   }
 
-  /** 调整某天目的地的顺序(dir: -1 上移 / 1 下移);酒店起终点固定不参与 */
+  /** 归一化:起点标记置于首、终点标记置于尾,中间条目自由排序 */
+  function normalizeStayMarkers(list) {
+    const starts = list.filter((d) => d.stay_role === 'start')
+    const ends = list.filter((d) => d.stay_role === 'end')
+    const mid = list.filter((d) => !d.stay_role)
+    return [...starts, ...mid, ...ends]
+  }
+
+  /** 调整某天目的地的顺序(dir: -1 上移 / 1 下移);起终点标记固定不参与 */
   async function moveDestination(planId, date, destId, dir) {
     const day = findDay(planId, date)
     if (!day) return
-    const list = [...(day.destinations || [])]
+    let list = [...(day.destinations || [])]
     const i = list.findIndex((d) => d.id === destId)
     const j = i + dir
     if (i < 0 || j < 0 || j >= list.length) return
-    if (list[i].stay_role || list[j].stay_role) return
+    if (list[i].stay_role) return // 起终点标记本身不可移动
     ;[list[i], list[j]] = [list[j], list[i]]
+    list = normalizeStayMarkers(list)
     await writeDayRow(planId, date, { destinations: list })
   }
 
-  /** 复制某天的一个目的地(插在原件之后,去除同步标记) */
+  /** 复制某天的一个目的地(插在原件之后;终点标记之前,去除同步标记) */
   async function copyDestination(planId, date, destId) {
     const day = findDay(planId, date)
     if (!day) return
-    const list = [...(day.destinations || [])]
+    let list = [...(day.destinations || [])]
     const i = list.findIndex((d) => d.id === destId)
     if (i < 0) return
     const clone = { ...list[i], id: uid('x') }
     delete clone.stay_link
     delete clone.stay_role
     delete clone.drv_leg
-    list.splice(i + 1, 0, clone)
+    let at = i + 1
+    const endIdx = list.findIndex((d) => d.stay_role === 'end')
+    if (endIdx >= 0 && at > endIdx) at = endIdx
+    list.splice(at, 0, clone)
+    list = normalizeStayMarkers(list)
     await writeDayRow(planId, date, { destinations: list })
   }
 
