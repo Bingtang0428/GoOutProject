@@ -48,14 +48,14 @@ async function regeoCity(lng, lat, key) {
   }
 }
 
-async function callTransit(key, p1, p2, city, cityd) {
+async function callTransit(key, p1, p2, city, cityd, strategy = '0') {
   const params = new URLSearchParams({
     key,
     origin: `${p1.lng},${p1.lat}`,
     destination: `${p2.lng},${p2.lat}`,
     city: city || '',
     cityd: cityd || city || '',
-    strategy: '0',
+    strategy,
     extensions: 'all'
   })
   const res = await fetch(`https://restapi.amap.com/v3/direction/transit/integrated?${params.toString()}`)
@@ -76,12 +76,18 @@ export async function onRequestGet(context) {
 
   try {
     let data = await callTransit(key, p1, p2, city, city)
-    // 首次失败/无方案:用逆地理取到起终点城市再试一次(支持跨城)
-    if (data.status !== '1' || !data.route?.transits?.length) {
+    const failed = () => data.status !== '1' || !data.route?.transits?.length
+
+    // 首次失败/无方案:用逆地理取起终点城市,并轮换几种策略重试(支持跨城)
+    if (failed()) {
       const [c1, c2] = await Promise.all([regeoCity(p1.lng, p1.lat, key), regeoCity(p2.lng, p2.lat, key)])
-      if (c1) {
-        data = await callTransit(key, p1, p2, c1, c2 || c1)
-        city = c1
+      const oc = c1 || city
+      const dc = c2 || city
+      if (!oc) return json({ ok: false, reason: 'no_city' })
+      for (const st of ['0', '1', '2']) {
+        data = await callTransit(key, p1, p2, oc, dc, st)
+        city = oc
+        if (!failed()) break
       }
     }
 

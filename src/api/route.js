@@ -124,9 +124,10 @@ export async function drivingMinutes(a, b, force = false) {
   return leg ? leg.min : null
 }
 
-/** 公共交通(公交/地铁/轮渡)真实路径;失败返回 null(由调用方退回估算) */
+/** 公共交通(公交/地铁/轮渡)真实路径;失败返回 { error }(由调用方退回估算并展示原因) */
 export async function transitLeg(a, b, city = '') {
-  if (!a || !b || !a.lat || !a.lng || !b.lat || !b.lng || !isSupabase) return null
+  if (!a || !b || !a.lat || !a.lng || !b.lat || !b.lng) return { error: 'no_coord' }
+  if (!isSupabase) return { error: 'demo_mode' }
   try {
     const ga = wgs2gcj(a.lat, a.lng)
     const gb = wgs2gcj(b.lat, b.lng)
@@ -135,11 +136,13 @@ export async function transitLeg(a, b, city = '') {
     u.searchParams.set('to', `${gb.lng},${gb.lat}`)
     if (city) u.searchParams.set('city', city)
     const res = await fetch(u.toString())
+    const ct = res.headers.get('content-type') || ''
+    if (!ct.includes('application/json')) return { error: 'api_not_deployed' }
     const j = await res.json()
-    if (!j?.ok) return null
-    return { min: j.min, km: j.km, cost: j.cost ?? 0, steps: Array.isArray(j.steps) ? j.steps : [] }
+    if (!j?.ok) return { error: j?.reason || 'no_route' }
+    return { min: j.min, km: j.km, cost: j.cost ?? 0, steps: Array.isArray(j.steps) ? j.steps : [], fromApi: true }
   } catch {
-    return null
+    return { error: 'network' }
   }
 }
 

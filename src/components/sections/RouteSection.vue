@@ -199,20 +199,31 @@ async function autoCalcLeg(day, dest) {
         leg_estimated: !leg.steps?.length
       })
     } else if (mode === 'transit') {
-      let leg = await transitLeg(a, b, city)
-      if (!leg) {
-        // 无真实公交数据 → 退回自驾 × 系数估算,并标注
+      const leg = await transitLeg(a, b, city)
+      if (leg?.fromApi) {
+        await store.updateDestinationFields(props.plan.id, day.date, dest.id, {
+          transit_min: leg.min,
+          distance_km: leg.km,
+          transit_detail: leg.steps || [],
+          transit_cost: leg.cost || 0,
+          leg_estimated: false,
+          leg_from_api: true,
+          leg_error: ''
+        })
+      } else {
+        // 无真实公交数据 → 退回自驾 × 系数估算,并记录原因供排查
         const drv = await drivingLeg(a, b)
         if (!drv?.min) return false
-        leg = { min: transitMinutes(drv.min), km: drv.km ?? null, steps: [], cost: 0, estimated: true }
+        await store.updateDestinationFields(props.plan.id, day.date, dest.id, {
+          transit_min: transitMinutes(drv.min),
+          distance_km: drv.km ?? null,
+          transit_detail: [],
+          transit_cost: 0,
+          leg_estimated: true,
+          leg_from_api: false,
+          leg_error: leg?.error || 'no_route'
+        })
       }
-      await store.updateDestinationFields(props.plan.id, day.date, dest.id, {
-        transit_min: leg.min,
-        distance_km: leg.km,
-        transit_detail: leg.steps || [],
-        transit_cost: leg.cost || 0,
-        leg_estimated: !!leg.estimated
-      })
     } else {
       const leg = await drivingLeg(a, b)
       if (!leg?.min) return false
@@ -271,6 +282,23 @@ function walkTotal(d) {
   return (d?.transit_detail || [])
     .filter((s) => s.mode === 'WALK' || /步行/.test(s.line || ''))
     .reduce((n, s) => n + (Number(s.walk_m) || 0), 0)
+}
+
+/** 公交失败原因 → 可读提示 */
+function legErrorText(r) {
+  const M = {
+    api_not_deployed: '公交服务未部署,请重新部署 Cloudflare Functions',
+    no_key: '高德 Key 未配置或不可用',
+    no_coord: '缺少坐标',
+    demo_mode: '演示模式无公交服务',
+    network: '网络异常',
+    no_city: '无法识别城市',
+    no_route: '该路线暂无公交方案',
+    no_transit: '该路线暂无公交方案',
+    invalid_coords: '坐标无效',
+    no_duration: '公交方案缺少时长'
+  }
+  return M[r] || r || '未知原因'
 }
 
 /** 调整目的地顺序(上移/下移) */
@@ -1253,10 +1281,12 @@ watch(
                     </div>
                     <p
                       v-else-if="d.mode === 'transit' && d.transit_min"
-                      class="mt-1 flex items-center gap-1.5 text-[11.5px] text-muted"
+                      class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11.5px] text-muted"
                     >
                       <i class="fa-solid fa-route text-[10px] text-primary/60" aria-hidden="true"></i>
-                      约 {{ fmtMinute(d.transit_min) }}<template v-if="d.distance_km"> · {{ d.distance_km }} km</template> · 未获取到公交详情,可点「算路程」重试
+                      约 {{ fmtMinute(d.transit_min) }}<template v-if="d.distance_km"> · {{ d.distance_km }} km</template>
+                      <template v-if="d.leg_from_api"> · 该路线以步行为主,暂无乘车换乘段</template>
+                      <template v-else> · 未获取到公交详情({{ legErrorText(d.leg_error) }})</template>
                     </p>
                     <!-- 步行距离与时长 -->
                     <p
