@@ -144,7 +144,7 @@ async function save() {
 
       <div>
         <label class="flabel">卡片配色</label>
-        <div class="flex gap-3">
+        <div class="flex flex-wrap gap-3">
           <button
             v-for="(g, i) in PASTEL_GRADS"
             :key="i"

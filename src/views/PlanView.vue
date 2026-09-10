@@ -138,6 +138,7 @@ const showLogs = ref(false)
 const showReport = ref(false)
 const showMemory = ref(false)
 const showIssues = ref(false)
+const showMore = ref(false)
 const planLogs = ref([])
 
 async function loadPlanLogs() {
@@ -227,26 +228,11 @@ onBeforeUnmount(() => {
     <DesktopSidebar />
     <MobileTopNav :back="true" :title="plan.name" :subtitle="fmtRange(plan.start_date, plan.end_date)" @back="backHome">
       <template #actions>
-        <button v-if="isSupabase" class="icon-btn" aria-label="最近动态" @click="openLogs">
-          <i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i>
-        </button>
-        <button class="icon-btn" aria-label="旅行相册" @click="showMemory = true">
-          <i class="fa-solid fa-images" aria-hidden="true"></i>
-        </button>
         <button class="icon-btn" aria-label="导出行程单" @click="showExport = true">
           <i class="fa-solid fa-file-export" aria-hidden="true"></i>
         </button>
-        <button class="icon-btn" aria-label="生成 PPT" @click="showPpt = true">
-          <i class="fa-solid fa-file-powerpoint" aria-hidden="true"></i>
-        </button>
-        <button v-if="isOwner" class="icon-btn" aria-label="成员与权限" @click="showPerm = true">
-          <i class="fa-solid fa-user-shield" aria-hidden="true"></i>
-        </button>
-        <button v-if="isOwner" class="icon-btn" aria-label="编辑计划" @click="openEdit">
-          <i class="fa-solid fa-pen" aria-hidden="true"></i>
-        </button>
-        <button v-if="isOwner" class="icon-btn icon-btn-danger" aria-label="删除计划" @click="showDelete = true">
-          <i class="fa-solid fa-trash-can" aria-hidden="true"></i>
+        <button class="icon-btn" aria-label="更多操作" @click="showMore = true">
+          <i class="fa-solid fa-ellipsis" aria-hidden="true"></i>
         </button>
       </template>
     </MobileTopNav>
@@ -406,6 +392,64 @@ onBeforeUnmount(() => {
     <ReportSheet v-model="showReport" :plan="plan" />
     <MemorySheet v-model="showMemory" :plan="plan" :can-edit="canEdit" />
     <IssuesSheet v-model="showIssues" :plan="plan" />
+
+    <!-- 移动端「更多操作」 -->
+    <BaseModal v-model="showMore" title="更多操作" :max-width="'420px'">
+      <div class="grid grid-cols-2 gap-3">
+        <button
+          v-if="isSupabase"
+          class="flex flex-col items-center gap-2 rounded-[14px] bg-surface-2/70 py-4 text-[13px] font-semibold text-ink-soft transition active:scale-95"
+          @click="showMore = false; openLogs()"
+        >
+          <i class="fa-solid fa-clock-rotate-left text-[18px] text-primary" aria-hidden="true"></i>最近动态
+        </button>
+        <button
+          class="flex flex-col items-center gap-2 rounded-[14px] bg-surface-2/70 py-4 text-[13px] font-semibold text-ink-soft transition active:scale-95"
+          @click="showMore = false; showMemory = true"
+        >
+          <i class="fa-solid fa-images text-[18px] text-primary" aria-hidden="true"></i>旅行相册
+        </button>
+        <button
+          class="flex flex-col items-center gap-2 rounded-[14px] bg-surface-2/70 py-4 text-[13px] font-semibold text-ink-soft transition active:scale-95"
+          @click="showMore = false; showPpt = true"
+        >
+          <i class="fa-solid fa-file-powerpoint text-[18px] text-primary" aria-hidden="true"></i>生成 PPT
+        </button>
+        <button
+          class="flex flex-col items-center gap-2 rounded-[14px] bg-surface-2/70 py-4 text-[13px] font-semibold text-ink-soft transition active:scale-95"
+          @click="showMore = false; showIssues = true"
+        >
+          <i class="fa-solid fa-stethoscope text-[18px] text-primary" aria-hidden="true"></i>行程体检
+        </button>
+        <button
+          class="flex flex-col items-center gap-2 rounded-[14px] bg-surface-2/70 py-4 text-[13px] font-semibold text-ink-soft transition active:scale-95"
+          @click="showMore = false; showReport = true"
+        >
+          <i class="fa-solid fa-chart-pie text-[18px] text-primary" aria-hidden="true"></i>行程复盘
+        </button>
+        <button
+          v-if="isOwner"
+          class="flex flex-col items-center gap-2 rounded-[14px] bg-surface-2/70 py-4 text-[13px] font-semibold text-ink-soft transition active:scale-95"
+          @click="showMore = false; showPerm = true"
+        >
+          <i class="fa-solid fa-user-shield text-[18px] text-primary" aria-hidden="true"></i>成员与权限
+        </button>
+        <button
+          v-if="isOwner"
+          class="flex flex-col items-center gap-2 rounded-[14px] bg-surface-2/70 py-4 text-[13px] font-semibold text-ink-soft transition active:scale-95"
+          @click="showMore = false; openEdit()"
+        >
+          <i class="fa-solid fa-pen text-[18px] text-primary" aria-hidden="true"></i>编辑计划
+        </button>
+        <button
+          v-if="isOwner"
+          class="flex flex-col items-center gap-2 rounded-[14px] bg-rose/10 py-4 text-[13px] font-semibold text-rose transition active:scale-95"
+          @click="showMore = false; showDelete = true"
+        >
+          <i class="fa-solid fa-trash-can text-[18px]" aria-hidden="true"></i>删除计划
+        </button>
+      </div>
+    </BaseModal>
 
     <!-- 最近动态 -->
     <BaseModal v-model="showLogs" title="最近动态" :max-width="'480px'">

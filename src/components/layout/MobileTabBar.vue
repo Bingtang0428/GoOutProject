@@ -26,7 +26,7 @@ defineExpose({ TABS })
     aria-label="功能模块"
   >
     <div
-      class="card mx-auto grid max-w-lg grid-cols-8 items-stretch gap-1 !rounded-[24px] !p-1.5"
+      class="no-scrollbar card mx-auto flex max-w-lg gap-1 overflow-x-auto !rounded-[24px] !p-1.5"
       style="box-shadow: 0 10px 30px rgba(60, 30, 44, 0.18)"
     >
       <button
@@ -34,7 +34,7 @@ defineExpose({ TABS })
         :key="t.key"
         type="button"
         :aria-current="active === t.key ? 'page' : undefined"
-        class="relative flex min-w-0 flex-col items-center justify-center gap-1 rounded-[16px] py-2 transition-all duration-250 ease-out active:scale-90"
+        class="relative flex min-w-[58px] flex-1 flex-col items-center justify-center gap-1 rounded-[16px] px-1 py-2 transition-all duration-250 ease-out active:scale-90"
         :class="active === t.key ? 'text-primary' : 'text-muted/90 hover:text-ink-soft'"
         @click="emit('change', t.key)"
       >
@@ -44,12 +44,12 @@ defineExpose({ TABS })
         ></span>
         <i
           :class="`fa-solid ${t.icon}`"
-          class="text-[17px] leading-none"
+          class="text-[18px] leading-none"
           :style="active === t.key ? 'filter: drop-shadow(0 1px 6px rgba(183,89,115,.35))' : ''"
           aria-hidden="true"
         ></i>
         <span
-          class="w-full truncate px-0.5 text-center text-[9px] font-semibold leading-none"
+          class="w-full whitespace-nowrap px-0.5 text-center text-[10px] font-semibold leading-none"
           :class="active === t.key ? '' : 'opacity-75'"
         >{{ t.label }}</span>
       </button>

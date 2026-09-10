@@ -248,7 +248,7 @@ function linkChip(b) {
   <section>
     <div class="mb-6 flex flex-wrap items-center justify-between gap-4">
       <div>
-        <h2 class="title-1 flex items-center gap-3">
+        <h2 class="title-1 flex flex-wrap items-center gap-3">
           <i class="fa-solid fa-scale-balanced text-[19px] text-primary" aria-hidden="true"></i>
           分账
           <span v-if="bills.length" class="chip chip-brand">{{ bills.length }} 笔</span>

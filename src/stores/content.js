@@ -431,11 +431,16 @@ export const useContentStore = defineStore('content', () => {
     return rows[planId].days.find((d) => d.date === date)
   }
 
-  /** 当天新增一个目的地(dest: {place,note,time}) */
+  /** 当天新增一个目的地(dest: {place,note,time});酒店为终点时插到终点之前 */
   async function addDestination(planId, date, dest) {
     await ensureDay(planId, date)
     const day = findDay(planId, date)
-    const destinations = [...(day.destinations || []), { id: uid('x'), ...dest }]
+    const list = [...(day.destinations || [])]
+    const item = { id: uid('x'), ...dest }
+    const endIdx = list.findIndex((d) => d.stay_role === 'end')
+    if (endIdx >= 0) list.splice(endIdx, 0, item)
+    else list.push(item)
+    const destinations = list
     if (!isSupabase) {
       await persistLocal(planId, 'days', (l) => {
         const t = l.find((d) => d.date === date)
@@ -514,7 +519,7 @@ export const useContentStore = defineStore('content', () => {
     }
   }
 
-  /** 调整某天目的地的顺序(dir: -1 上移 / 1 下移) */
+  /** 调整某天目的地的顺序(dir: -1 上移 / 1 下移);酒店起终点固定不参与 */
   async function moveDestination(planId, date, destId, dir) {
     const day = findDay(planId, date)
     if (!day) return
@@ -522,6 +527,7 @@ export const useContentStore = defineStore('content', () => {
     const i = list.findIndex((d) => d.id === destId)
     const j = i + dir
     if (i < 0 || j < 0 || j >= list.length) return
+    if (list[i].stay_role || list[j].stay_role) return
     ;[list[i], list[j]] = [list[j], list[i]]
     if (!isSupabase) {
       await persistLocal(planId, 'days', (l) => {
@@ -542,6 +548,12 @@ export const useContentStore = defineStore('content', () => {
   // ------------------------------------------------------------
   // 食宿 / TODO / 攻略 / 提醒 —— 均为薄封装,走通用原语
   // ------------------------------------------------------------
+  /** 某条食宿归属的多个 Day 序号(兼容旧的单个 day 字段) */
+  function stayDays(s) {
+    if (Array.isArray(s?.days) && s.days.length) return s.days
+    return s?.day ? [s.day] : []
+  }
+
   function addStay(planId, payload) {
     return remoteWrite(planId, 'stays', 'stays', {
       id: uid('stay'), plan_id: planId, type: 'stay',
@@ -550,15 +562,34 @@ export const useContentStore = defineStore('content', () => {
     })
   }
 
-  function updateStay(planId, id, patch) {
-    return remoteUpdate(planId, 'stays', 'stays', id, patch)
+  /** 更新食宿;若该店已选定,同步刷新其在路线中的起终点信息 */
+  async function updateStay(planId, id, patch) {
+    await remoteUpdate(planId, 'stays', 'stays', id, patch)
+    const row = (rows[planId]?.stays || []).find((s) => s.id === id)
+    if (row?.chosen && typeof row.latitude === 'number' && typeof row.longitude === 'number') {
+      const dates = new Set()
+      for (const n of stayDays(row)) {
+        const date = dayDateByNum(planId, n)
+        if (date) {
+          dates.add(date)
+          await applyStayToDay(planId, date, row)
+        }
+      }
+      for (const anyDay of rows[planId]?.days || []) {
+        if (!dates.has(anyDay.date) && (anyDay.destinations || []).some((d) => d.stay_link === id)) {
+          await persistDayDests(planId, anyDay.date, (anyDay.destinations || []).filter((d) => d.stay_link !== id))
+        }
+      }
+    }
   }
 
   async function removeStay(planId, id) {
     const row = (rows[planId]?.stays || []).find((s) => s.id === id)
     if (row?.chosen) {
-      const date = dayDateByNum(planId, row.day)
-      if (date) await removeSyncedDest(planId, date, (d) => d.stay_link === id)
+      for (const n of stayDays(row)) {
+        const date = dayDateByNum(planId, n)
+        if (date) await removeSyncedDest(planId, date, (d) => d.stay_link === id)
+      }
     }
     await remoteDelete(planId, 'stays', 'stays', id)
   }
@@ -631,88 +662,107 @@ export const useContentStore = defineStore('content', () => {
     await remoteUpdate(planId, 'stays', 'stays', id, { votes })
   }
 
+  /** 持久化某天的 destinations(本地直写 / 云端乐观更新) */
+  async function persistDayDests(planId, date, dests) {
+    if (!isSupabase) {
+      await persistLocal(planId, 'days', (l) => {
+        const t = l.find((d) => d.date === date)
+        if (t) t.destinations = dests
+      })
+      return
+    }
+    const day = findDay(planId, date)
+    if (day) day.destinations = dests
+    const { error } = await supabase
+      .from('route_days')
+      .update({ destinations: dests })
+      .eq('plan_id', planId)
+      .eq('date', date)
+    if (error) console.warn('[content] 更新路线失败:', error.message)
+  }
+
   /**
-   * 食宿选定/取消选定 —— 选定时把地点同步进路线规划当天(按 day 序号定位日期):
-   * 同类型同天只保留一个选定;取消选定或改选时,自动从路线移除旧店。
+   * 把选定的酒店写入某天路线:酒店作为该天的「起点」与「终点」;
+   * 餐厅则只插入一次(不设起终点)。已存在的同店条目先清除,避免重复。
+   */
+  async function applyStayToDay(planId, date, row) {
+    const day = findDay(planId, date)
+    if (!day) return
+    const others = (day.destinations || []).filter((d) => d.stay_link !== row.id)
+    const meta = {
+      place: row.name,
+      lat: row.latitude,
+      lng: row.longitude,
+      note: `已选定${row.type === 'food' ? '餐厅' : '住宿'}:${row.booked ? '已预订' : '待预订'}`,
+      stay_link: row.id
+    }
+    let dests
+    if (row.type === 'stay') {
+      dests = others.length
+        ? [
+            { id: uid('dst'), time: '', ...meta, stay_role: 'start' },
+            ...others,
+            { id: uid('dst'), time: '', ...meta, stay_role: 'end' }
+          ]
+        : [{ id: uid('dst'), time: '', ...meta, stay_role: 'start' }]
+    } else {
+      dests = [...others, { id: uid('dst'), time: '', ...meta }]
+    }
+    await persistDayDests(planId, date, dests)
+  }
+
+  /**
+   * 食宿选定/取消选定 —— 选定时把地点同步进路线规划:
+   * 住宿作为所选每一天的「起点 + 终点」;同类型同天只保留一个选定。
    * 返回 { ok, reason? } ;reason: no_day / no_coord
    */
   async function chooseStay(planId, id, actor, chosen) {
     const row = (rows[planId]?.stays || []).find((s) => s.id === id)
     if (!row) return { ok: false, reason: 'gone' }
-    const daysOf = (s) => (Array.isArray(s.days) && s.days.length ? s.days : s.day ? [s.day] : [])
-    const firstDay = daysOf(row)[0] ?? null
-    const date = dayDateByNum(planId, firstDay)
+    const dayNums = stayDays(row)
     if (chosen) {
-      if (!date) return { ok: false, reason: 'no_day' }
+      if (!dayNums.length) return { ok: false, reason: 'no_day' }
       if (typeof row.latitude !== 'number' || typeof row.longitude !== 'number') {
         return { ok: false, reason: 'no_coord' }
       }
-      // 清除该店曾同步到其它日期的旧目的地(如改过归属日),保证唯一
-      for (const anyDay of rows[planId]?.days || []) {
-        if (anyDay.date !== date) {
-          const g2 = (anyDay.destinations || []).filter((d) => d.stay_link === id)
-          if (g2.length) {
-            const keep2 = (anyDay.destinations || []).filter((d) => d.stay_link !== id)
-            if (!isSupabase) {
-              await persistLocal(planId, 'days', (l) => {
-                const t = l.find((d) => d.date === anyDay.date)
-                if (t) t.destinations = keep2
-              })
-            } else {
-              anyDay.destinations = keep2
-              const { error } = await supabase
-                .from('route_days')
-                .update({ destinations: keep2 })
-                .eq('plan_id', planId)
-                .eq('date', anyDay.date)
-              if (error) console.warn('[content] 清理旧选定目的地失败:', error.message)
-            }
-            await dropDestComments(planId, anyDay.date, g2.map((d) => d.id))
-          }
-        }
-      }
-      // 取消同类型同天(有交集)的其它选定,并移除其已同步地点
+      // 取消同类型、有日期交集的其它选定,并移除其已同步地点
       for (const o of rows[planId]?.stays || []) {
-        const overlap = daysOf(o).some((n) => daysOf(row).includes(n))
+        const overlap = stayDays(o).some((n) => dayNums.includes(n))
         if (o.type === row.type && overlap && o.chosen && o.id !== id) {
-          const od = dayDateByNum(planId, daysOf(o)[0])
-          if (od) await removeSyncedDest(planId, od, (d) => d.stay_link === o.id)
+          for (const on of stayDays(o)) {
+            const od = dayDateByNum(planId, on)
+            if (od) await removeSyncedDest(planId, od, (d) => d.stay_link === o.id)
+          }
           await remoteUpdate(planId, 'stays', 'stays', o.id, { chosen: false, chosen_by: null })
         }
       }
       await remoteUpdate(planId, 'stays', 'stays', id, { chosen: true, chosen_by: actor || null })
-      // 写入 / 更新当天路线目的地(stay_link 幂等)
-      const day = findDay(planId, date)
-      if (!day) return { ok: true }
-      const dests = [...(day.destinations || [])]
-      const idx = dests.findIndex((d) => d.stay_link === id)
-      const meta = {
-        place: row.name,
-        lat: row.latitude,
-        lng: row.longitude,
-        note: `已选定${row.type === 'food' ? '餐厅' : '住宿'}:${row.booked ? '已预订' : '待预订'}`
+      // 写入所选每一天(酒店=起点+终点)
+      const chosenDates = new Set()
+      for (const n of dayNums) {
+        const date = dayDateByNum(planId, n)
+        if (!date) continue
+        chosenDates.add(date)
+        await applyStayToDay(planId, date, row)
       }
-      if (idx === -1) dests.push({ id: uid('dst'), time: '', ...meta, stay_link: id })
-      else dests[idx] = { ...dests[idx], ...meta }
-      if (!isSupabase) {
-        await persistLocal(planId, 'days', (l) => {
-          const t = l.find((d) => d.date === date)
-          if (t) t.destinations = dests
-        })
-      } else {
-        day.destinations = dests
-        const { error } = await supabase
-          .from('route_days')
-          .update({ destinations: dests })
-          .eq('plan_id', planId)
-          .eq('date', date)
-        if (error) console.warn('[content] 同步选定食宿→路线失败:', error.message)
+      // 清理不在所选日期内的旧同步(如改过归属日)
+      for (const anyDay of rows[planId]?.days || []) {
+        if (chosenDates.has(anyDay.date)) continue
+        const gone = (anyDay.destinations || []).filter((d) => d.stay_link === id)
+        if (gone.length) {
+          await persistDayDests(planId, anyDay.date, (anyDay.destinations || []).filter((d) => d.stay_link !== id))
+          await dropDestComments(planId, anyDay.date, gone.map((d) => d.id))
+        }
       }
       return { ok: true }
     }
-    // 取消选定
+    // 取消选定:从所有日期移除
     await remoteUpdate(planId, 'stays', 'stays', id, { chosen: false, chosen_by: null })
-    if (date) await removeSyncedDest(planId, date, (d) => d.stay_link === id)
+    for (const anyDay of rows[planId]?.days || []) {
+      if ((anyDay.destinations || []).some((d) => d.stay_link === id)) {
+        await removeSyncedDest(planId, anyDay.date, (d) => d.stay_link === id)
+      }
+    }
     return { ok: true }
   }
 
@@ -1208,6 +1258,12 @@ export const useContentStore = defineStore('content', () => {
         }
       }
       if (!touchedDay) continue
+      // 保持酒店起/终点固定在当天首尾(自驾同步可能把新段追加到末尾)
+      const starts = dests.filter((d) => d.stay_role === 'start')
+      const ends = dests.filter((d) => d.stay_role === 'end')
+      if (starts.length || ends.length) {
+        dests = [...starts, ...dests.filter((d) => !d.stay_role), ...ends]
+      }
       days++
       added += dAdded
       updated += dUpdated

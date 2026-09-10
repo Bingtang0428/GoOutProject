@@ -276,7 +276,7 @@ function scheduleAutoDurations() {
       await new Promise((r) => setTimeout(r, 220)) // 温和限速,避免触发风控
     }
     autoRun.value = false
-    const left = flattenDests().filter((it) => !hasLeg(it.dest))
+    const left = flattenDests().filter((it, i) => i > 0 && !hasLeg(it.dest))
     if (done || fail) {
       legNote.value = done
         ? `已自动算好 ${done} 段路程时长` + (fail ? `,有 ${fail} 段暂无法定位` : '')
@@ -852,7 +852,7 @@ watch(
   <section>
     <div class="mb-6 flex flex-wrap items-center justify-between gap-4">
       <div>
-        <h2 class="title-1 flex items-center gap-3">
+        <h2 class="title-1 flex flex-wrap items-center gap-3">
           <i class="fa-solid fa-route text-[19px] text-primary" aria-hidden="true"></i>
           路线规划
           <span v-if="totalDest" class="chip chip-brand">{{ totalDest }} 个地点</span>
@@ -975,7 +975,7 @@ watch(
           <span v-if="i < days.length - 1" class="absolute bottom-[-34px] left-[13px] top-11 w-px bg-primary/15"></span>
 
           <article class="card p-0">
-            <header class="flex flex-wrap items-center gap-x-4 gap-y-2 px-6 pb-4 pt-5">
+            <header class="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 pb-4 pt-5 sm:px-6">
               <span class="text-[13px] font-semibold text-ink">{{ fmtDay(day.date) }}</span>
               <input
                 v-if="canEdit"
@@ -1044,14 +1044,23 @@ watch(
 
             <div v-if="day.destinations?.length" class="divide-y divide-line/60">
               <div v-for="(d, di) in day.destinations" :key="d.id">
-                <div class="grid grid-cols-[64px_1fr] items-start gap-x-3 px-6 py-3 transition-colors duration-200 sm:grid-cols-[72px_1fr_auto] hover:bg-surface-2/60">
+                <div class="grid grid-cols-[64px_1fr] items-start gap-x-3 px-4 py-3 transition-colors duration-200 sm:grid-cols-[72px_1fr_auto] sm:px-6 hover:bg-surface-2/60">
                   <span class="pt-0.5 text-[12.5px] font-semibold text-primary/80 tabular-nums">
                     {{ d.time || '全天' }}
                   </span>
                   <div class="min-w-0">
-                    <p class="flex items-center gap-2 text-[14.5px] font-medium text-ink">
+                    <p class="flex flex-wrap items-center gap-2 text-[14.5px] font-medium text-ink">
                       <i class="fa-solid fa-location-dot text-[11px] text-primary/60" aria-hidden="true"></i>
                       {{ d.place }}
+                      <span v-if="d.stay_role === 'start'" class="chip chip-brand !px-2 !py-0 !text-[10px]">
+                        <i class="fa-solid fa-play text-[8px]" aria-hidden="true"></i>起点 · 酒店
+                      </span>
+                      <span v-else-if="d.stay_role === 'end'" class="chip chip-brand !px-2 !py-0 !text-[10px]">
+                        <i class="fa-solid fa-flag-checkered text-[8px]" aria-hidden="true"></i>终点 · 回酒店
+                      </span>
+                      <span v-else-if="d.stay_link" class="chip chip-plain !px-2 !py-0 !text-[10px]">
+                        <i class="fa-solid fa-hotel text-[8px]" aria-hidden="true"></i>已选定
+                      </span>
                     </p>
                     <p v-if="d.note" class="mt-0.5 text-[12.5px] leading-relaxed text-muted">{{ d.note }}</p>
                     <!-- 交通方式:自驾 / 公交 / 步行,并展示详细行程 -->
@@ -1182,12 +1191,12 @@ watch(
                       </span>
                     </div>
                   </div>
-                  <div class="col-span-2 flex items-center gap-1 pt-1 pl-[76px] sm:col-span-1 sm:pl-0 sm:pt-0">
+                  <div class="col-span-2 flex flex-wrap items-center gap-1 pt-2 sm:col-span-1 sm:pt-0">
                     <template v-if="canEdit">
-                      <button class="icon-btn !h-7 !w-7" title="上移" :disabled="di === 0" :class="di === 0 ? 'opacity-30' : ''" @click="moveDest(day, d, -1)">
+                      <button class="icon-btn !h-7 !w-7" title="上移" :disabled="di === 0 || d.stay_role" :class="di === 0 || d.stay_role ? 'opacity-30' : ''" @click="moveDest(day, d, -1)">
                         <i class="fa-solid fa-arrow-up text-[11px]" aria-hidden="true"></i>
                       </button>
-                      <button class="icon-btn !h-7 !w-7" title="下移" :disabled="di === day.destinations.length - 1" :class="di === day.destinations.length - 1 ? 'opacity-30' : ''" @click="moveDest(day, d, 1)">
+                      <button class="icon-btn !h-7 !w-7" title="下移" :disabled="di === day.destinations.length - 1 || d.stay_role" :class="di === day.destinations.length - 1 || d.stay_role ? 'opacity-30' : ''" @click="moveDest(day, d, 1)">
                         <i class="fa-solid fa-arrow-down text-[11px]" aria-hidden="true"></i>
                       </button>
                     </template>
@@ -1295,7 +1304,7 @@ watch(
               </button>
             </p>
 
-            <footer v-if="canEdit && day.destinations?.length" class="px-6 pb-4">
+            <footer v-if="canEdit && day.destinations?.length" class="px-4 pb-4 sm:px-6">
               <button
                 class="w-full rounded-[12px] border border-dashed border-line py-2 text-[12.5px] font-semibold text-muted transition-all duration-200 ease-out hover:border-primary/40 hover:text-primary active:scale-[0.98]"
                 @click="openAdd(day.date)"

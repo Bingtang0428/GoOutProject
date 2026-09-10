@@ -92,8 +92,12 @@ function chosenDayText(s) {
 async function confirmStay(s) {
   if (!props.canEdit) return
   const r = await store.chooseStay(props.plan.id, s.id, me.value, true)
-  if (r?.ok) toast(`已选定「${s.name}」并加入${chosenDayText(s)}路线`)
-  else if (r?.reason === 'no_coord') toast('这家还没有精确定位 —— 先「编辑」并用选点器选到准确位置,才能同步进路线')
+  if (r?.ok) {
+    const n = daysOf(s).length
+    const where = n > 1 ? `所选 ${n} 天` : chosenDayText(s)
+    const role = s.type === 'food' ? '加入' : '作为起点与终点加入'
+    toast(`已选定「${s.name}」,${role}${where}行程`)
+  } else if (r?.reason === 'no_coord') toast('这家还没有精确定位 —— 先「编辑」并用选点器选到准确位置,才能同步进路线')
   else if (r?.reason === 'no_day') toast('请先把这家安排到具体某一天,才能同步进路线')
 }
 
@@ -196,7 +200,7 @@ function tagTone(tag) {
   <section>
     <div class="mb-6 flex flex-wrap items-center justify-between gap-4">
       <div>
-        <h2 class="title-1 flex items-center gap-3">
+        <h2 class="title-1 flex flex-wrap items-center gap-3">
           <i class="fa-solid fa-bed text-[19px] text-primary" aria-hidden="true"></i>
           食宿安排
           <span class="chip chip-brand">{{ stays.length }} 家</span>
@@ -368,7 +372,7 @@ function tagTone(tag) {
                 </template>
                 <template v-else>
                   <i class="fa-solid fa-lightbulb mr-1 text-amber" aria-hidden="true"></i>
-                  全队票完后由一人选定,自动同步进当天路线
+                  全队票完后由一人选定;酒店会作为所选每天行程的起点与终点
                 </template>
               </p>
               <div v-if="canEdit" class="flex items-center gap-1.5">
