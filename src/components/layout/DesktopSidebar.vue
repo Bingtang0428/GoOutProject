@@ -124,7 +124,7 @@ function logout() {
           class="chip chip-plain gap-1.5 !px-2"
           :title="m.name + (m.id === plansStore.currentPlan.owner_id ? '(创建者)' : '')"
         >
-          <Avatar :name="m.name" :size="18" :ring="false" />
+          <Avatar :name="m.name" :size="18" :ring="false" :color="m.color" :seed="m.id" />
           <span class="max-w-[56px] truncate">{{ m.name }}</span>
           <i
             v-if="m.id === plansStore.currentPlan.owner_id"
@@ -144,7 +144,7 @@ function logout() {
           class="chip chip-plain gap-1.5 !px-2 opacity-70"
           title="围观者(只读)"
         >
-          <Avatar :name="v.name" :size="18" :ring="false" />
+          <Avatar :name="v.name" :size="18" :ring="false" :color="v.color" :seed="v.id" />
           <span class="max-w-[56px] truncate">{{ v.name }}</span>
           <i
             v-if="canManage"

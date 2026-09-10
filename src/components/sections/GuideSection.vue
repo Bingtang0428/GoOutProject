@@ -8,7 +8,7 @@ import { useContentStore } from '@/stores/content'
 import { useAuthStore } from '@/stores/auth'
 import { isSupabase, storageUrl, uploadCover } from '@/api/supabase'
 import { fetchLinkMeta } from '@/api/metadata'
-import { hostOf, PASTEL_GRADS } from '@/utils/misc'
+import { hostOf, PASTEL_GRADS, parseShareText } from '@/utils/misc'
 import { fmtSavedAt } from '@/utils/date'
 import BaseModal from '@/components/ui/BaseModal.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
@@ -70,26 +70,23 @@ function canRemoveCmt(c) {
   )
 }
 
+/** 评论点赞 */
+function likesOf(c) {
+  return Array.isArray(c.likes) ? c.likes : []
+}
+function likedByMe(c) {
+  const me = auth.user
+  if (!me) return false
+  return likesOf(c).some((x) => (x.id && x.id === me.id) || x.name === me.name)
+}
+function toggleLike(c) {
+  if (!auth.user) return
+  store.toggleGuideCommentLike(props.plan.id, c.id, { id: auth.user.id, name: auth.user.name })
+}
+
 /* ---- 链接自动识别 ---- */
 const fetching = ref(false)
 const metaHint = ref('')
-
-/**
- * 从小红书等分享文案里提取 URL 与标题。
- * 例:「54 【重庆citywalk… - 茄汁鳗鱼饭 | 小红书…】 😆 B1Pyq… 😆 https://…」
- */
-function parseShareText(raw) {
-  const text = String(raw || '')
-  const m = text.match(/https?:\/\/[^\s，。、；;"'）)】]+/i)
-  const url = m ? m[0].replace(/[)\]】」，。；;、]+$/, '') : ''
-  let title = ''
-  const bracket = text.match(/【([^】]+)】/)
-  if (bracket) title = bracket[1]
-  else if (url) title = text.replace(url, ' ').trim()
-  // 去掉「- 作者 | 小红书…」等尾巴与开头的序号
-  title = title.split(/\s*[-|｜]\s*/)[0].replace(/^\d+\s*/, '').replace(/小红书.*$/, '').trim()
-  return { url, title }
-}
 
 async function autoDetect() {
   const parsed = parseShareText(form.url)
@@ -265,7 +262,19 @@ async function save() {
                     <p class="text-[12.5px] leading-relaxed text-ink-soft">
                       <b class="font-semibold text-ink">{{ c.author?.name || '匿名' }}</b> {{ c.text }}
                     </p>
-                    <p class="muted mt-0.5 text-[10.5px]">{{ fmtSavedAt(c.created_at) }}</p>
+                    <div class="mt-0.5 flex items-center gap-3">
+                      <button
+                        type="button"
+                        class="flex items-center gap-1 text-[10.5px] transition-colors active:scale-95"
+                        :class="likedByMe(c) ? 'font-semibold text-primary' : 'text-muted hover:text-primary'"
+                        :title="likedByMe(c) ? '取消点赞' : '点赞'"
+                        @click="toggleLike(c)"
+                      >
+                        <i :class="likedByMe(c) ? 'fa-solid fa-heart' : 'fa-regular fa-heart'" aria-hidden="true"></i>
+                        {{ likesOf(c).length || '赞' }}
+                      </button>
+                      <span class="muted text-[10.5px]">{{ fmtSavedAt(c.created_at) }}</span>
+                    </div>
                   </div>
                   <button
                     v-if="canRemoveCmt(c)"

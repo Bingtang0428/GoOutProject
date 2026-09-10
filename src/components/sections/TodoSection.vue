@@ -204,7 +204,7 @@ function countOf(key) {
                   :class="t.assignee?.id === p.id ? 'chip-brand' : 'chip-plain opacity-70'"
                   @click="store.setTodoAssignee(plan.id, t.id, t.assignee?.id === p.id ? null : { id: p.id, name: p.name }); assignFor = null"
                 >
-                  <Avatar :name="p.name" :size="18" :ring="false" />{{ p.name }}
+                  <Avatar :name="p.name" :size="18" :ring="false" :color="p.color" :seed="p.id" />{{ p.name }}
                 </button>
                 <button
                   v-if="t.assignee"

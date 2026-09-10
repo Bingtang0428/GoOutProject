@@ -332,6 +332,15 @@ export const usePlansStore = defineStore('plans', () => {
     await applyRoleChange(planId, lists)
   }
 
+  /** 设置某成员的头像配色(索引),避免同首字成员头像雷同 */
+  async function setPersonColor(planId, personId, color) {
+    const plan = plans.value.find((p) => p.id === planId)
+    if (!plan) return
+    const members = (plan.members || []).map((m) => (m.id === personId ? { ...m, color } : m))
+    const viewers = (plan.viewers || []).map((v) => (v.id === personId ? { ...v, color } : v))
+    await updatePlan(planId, { members, viewers })
+  }
+
   /** 移出计划 */
   async function removePerson(planId, personId) {
     const plan = plans.value.find((p) => p.id === planId)
@@ -366,6 +375,7 @@ export const usePlansStore = defineStore('plans', () => {
     inviteParticipant,
     inviteViewer,
     setPersonRole,
+    setPersonColor,
     removePerson,
     joinAsParticipant,
     trash,

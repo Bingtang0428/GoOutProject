@@ -5,6 +5,7 @@
 // ============================================================
 import { ref, computed } from 'vue'
 import { usePlansStore } from '@/stores/plans'
+import { AVATAR_GRADS } from '@/utils/misc'
 import BaseModal from '@/components/ui/BaseModal.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import Avatar from '@/components/ui/Avatar.vue'
@@ -23,14 +24,19 @@ const addAs = ref('participant') // participant | viewer
 const roster = computed(() => {
   const rows = []
   const owner = props.plan.members.find((m) => m.id === props.plan.owner_id)
-  rows.push({ id: props.plan.owner_id, name: owner?.name || '创建者', role: 'owner' })
+  rows.push({ id: props.plan.owner_id, name: owner?.name || '创建者', role: 'owner', color: owner?.color })
   for (const m of props.plan.members || []) {
     if (m.id === props.plan.owner_id) continue
-    rows.push({ id: m.id, name: m.name, role: 'participant' })
+    rows.push({ id: m.id, name: m.name, role: 'participant', color: m.color })
   }
-  for (const v of props.plan.viewers || []) rows.push({ id: v.id, name: v.name, role: 'viewer' })
+  for (const v of props.plan.viewers || []) rows.push({ id: v.id, name: v.name, role: 'viewer', color: v.color })
   return rows
 })
+
+/** 编辑某成员的头像配色 */
+function setColor(p, i) {
+  plansStore.setPersonColor(props.plan.id, p.id, i)
+}
 
 async function addPerson() {
   const name = addName.value.trim()
@@ -105,13 +111,27 @@ async function removePerson(p) {
           class="card flex items-center gap-3 px-4 py-3"
           :class="p.role === 'owner' ? 'ring-1 ring-primary/40' : ''"
         >
-          <Avatar :name="p.name" :size="34" />
+          <Avatar :name="p.name" :size="34" :color="p.color" :seed="p.id" />
           <div class="min-w-0 flex-1">
             <p class="flex items-center gap-2">
               <span class="truncate text-[14px] font-semibold text-ink">{{ p.name }}</span>
               <span v-if="p.role === 'owner'" class="chip chip-brand !text-[11px] !px-2 !py-0">创建者</span>
             </p>
             <p class="text-[11.5px] text-muted">{{ ROLE_META[p.role].hint }}</p>
+            <!-- 头像配色(点击切换,避免同首字成员头像雷同) -->
+            <div class="mt-1.5 flex flex-wrap items-center gap-1">
+              <span class="muted text-[10.5px]">头像色</span>
+              <button
+                v-for="(g, gi) in AVATAR_GRADS"
+                :key="gi"
+                type="button"
+                class="h-4 w-4 rounded-full transition-transform active:scale-90"
+                :class="Number(p.color) === gi ? 'ring-2 ring-primary ring-offset-1 ring-offset-surface' : 'ring-1 ring-black/10'"
+                :style="{ background: `linear-gradient(135deg, ${g[0]}, ${g[1]})` }"
+                :title="`配色 ${gi + 1}`"
+                @click="setColor(p, gi)"
+              ></button>
+            </div>
           </div>
           <template v-if="p.role !== 'owner'">
             <BaseButton variant="ghost" size="sm" @click="toggleRole(p)">

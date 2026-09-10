@@ -162,7 +162,7 @@ async function save() {
         <label class="flabel">协作成员</label>
         <div class="mb-2 flex flex-wrap gap-2">
           <span v-for="m in form.members" :key="m.id" class="chip chip-plain gap-1.5 !px-2 !py-1">
-            <Avatar :name="m.name" :size="18" :ring="false" />
+            <Avatar :name="m.name" :size="18" :ring="false" :color="m.color" :seed="m.id" />
             {{ m.name }}
             <i
               class="fa-solid fa-xmark cursor-pointer opacity-40 hover:opacity-100"

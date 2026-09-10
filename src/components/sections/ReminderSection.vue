@@ -49,17 +49,21 @@ function isClosed(r) {
 function iRead(r) {
   return readsOf(r).some((x) => samePerson(x, me.value))
 }
+/** 指定成员里还没读的人 */
+function unreadTargets(r) {
+  return targetsOf(r).filter((t) => !readsOf(r).some((x) => samePerson(t, x)))
+}
 const unreadCount = computed(() => reminders.value.filter((r) => !isClosed(r)).length)
 
-async function markRead(r) {
+async function toggleRead(r) {
   if (!props.canEdit || !me.value) return
-  await store.readReminderBy(props.plan.id, r.id, me.value)
+  await store.readReminderBy(props.plan.id, r.id, me.value, !iRead(r))
 }
 
 async function markAllMine() {
   if (!props.canEdit || !me.value) return
   for (const r of reminders.value) {
-    if (!isClosed(r) && !iRead(r)) await store.readReminderBy(props.plan.id, r.id, me.value)
+    if (!iRead(r)) await store.readReminderBy(props.plan.id, r.id, me.value, true)
   }
 }
 
@@ -185,6 +189,13 @@ function groupTone(key) {
                       <i class="fa-solid fa-circle-check text-[10px]" aria-hidden="true"></i>
                       已读 {{ targetsOf(r).filter((t) => readsOf(r).some((x) => samePerson(t, x))).length }}/{{ targetsOf(r).length }}
                     </span>
+                    <span v-if="unreadTargets(r).length" class="flex items-center gap-1 font-medium text-rose">
+                      <i class="fa-regular fa-clock text-[10px]" aria-hidden="true"></i>
+                      未读:{{ unreadTargets(r).map((t) => t.name).join('、') }}
+                    </span>
+                    <span v-else class="flex items-center gap-1 font-medium text-[#16a34a]">
+                      <i class="fa-solid fa-check-double text-[10px]" aria-hidden="true"></i>全部已读
+                    </span>
                     <span class="flex flex-wrap items-center gap-1">
                       <span
                         v-for="t in targetsOf(r)"
@@ -193,7 +204,7 @@ function groupTone(key) {
                         :class="readsOf(r).some((x) => samePerson(t, x)) ? 'bg-[#16a34a]/10' : 'bg-surface-2'"
                         :title="readsOf(r).some((x) => samePerson(t, x)) ? `${t.name} 已读` : `${t.name} 未读`"
                       >
-                        <Avatar :name="t.name" :size="16" :ring="false" />
+                        <Avatar :name="t.name" :size="16" :ring="false" :seed="t.id" />
                         <span class="max-w-[48px] truncate" :class="readsOf(r).some((x) => samePerson(t, x)) ? 'text-[#16a34a]' : 'text-muted'">{{ t.name }}</span>
                         <i
                           class="text-[9px]"
@@ -210,13 +221,18 @@ function groupTone(key) {
                   <button
                     v-if="!iRead(r)"
                     class="chip chip-brand cursor-pointer whitespace-nowrap transition-all duration-150 active:scale-95"
-                    @click.stop="markRead(r)"
+                    @click.stop="toggleRead(r)"
                   >
                     <i class="fa-solid fa-check text-[10px]" aria-hidden="true"></i>我已读
                   </button>
-                  <span v-else class="chip chip-success whitespace-nowrap">
+                  <button
+                    v-else
+                    class="chip chip-success cursor-pointer whitespace-nowrap transition-all duration-150 active:scale-95"
+                    title="点击可取消已读"
+                    @click.stop="toggleRead(r)"
+                  >
                     <i class="fa-solid fa-check text-[10px]" aria-hidden="true"></i>已读
-                  </span>
+                  </button>
                   <span
                     class="icon-btn icon-btn-danger touch-reveal !h-8 !w-8 shrink-0 opacity-0 transition-opacity duration-200 group-hover:opacity-100"
                     @click.stop="store.removeReminder(plan.id, r.id)"
@@ -258,7 +274,7 @@ function groupTone(key) {
               :class="form.targets.some((t) => t.id === p.id) ? 'chip-brand' : 'chip-plain opacity-70'"
               @click="toggleTarget(p)"
             >
-              <Avatar :name="p.name" :size="18" :ring="false" />{{ p.name }}
+              <Avatar :name="p.name" :size="18" :ring="false" :color="p.color" :seed="p.id" />{{ p.name }}
             </button>
           </div>
           <p class="muted mt-1.5 text-[11.5px]">

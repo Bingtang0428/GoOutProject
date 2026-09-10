@@ -484,7 +484,7 @@ async function saveFuel() {
               :class="fuelForm.paid_by?.id === p.id ? 'chip-brand' : 'chip-plain'"
               @click="fuelForm.paid_by = { id: p.id, name: p.name }"
             >
-              <Avatar :name="p.name" :size="18" :ring="false" />{{ p.name }}
+              <Avatar :name="p.name" :size="18" :ring="false" :color="p.color" :seed="p.id" />{{ p.name }}
             </button>
           </div>
         </div>

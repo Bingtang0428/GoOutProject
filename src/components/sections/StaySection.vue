@@ -14,6 +14,7 @@ import BaseTag from '@/components/ui/BaseTag.vue'
 import GeoPlacePicker from '@/components/ui/GeoPlacePicker.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import { toast } from '@/composables/toast'
+import { parseShareText } from '@/utils/misc'
 
 const props = defineProps({
   plan: { type: Object, required: true },
@@ -150,6 +151,17 @@ function toggleTag(t) {
   const i = form.tags.indexOf(t)
   if (i === -1) form.tags.push(t)
   else form.tags.splice(i, 1)
+}
+
+/** 粘贴整段分享文案(携程/点评等):自动提取链接,空名称时用文案里的酒店名 */
+function onLinkPaste(e) {
+  const text = e.clipboardData?.getData('text') || ''
+  const { url, title } = parseShareText(text)
+  if (!url) return // 没识别到链接,按默认粘贴
+  e.preventDefault()
+  form.link = url
+  if (!form.name.trim() && title) form.name = title.slice(0, 40)
+  toast('已从分享文案中提取链接')
 }
 
 function addCustomTag() {
@@ -356,7 +368,7 @@ function tagTone(tag) {
             </div>
             <div v-if="s.votes?.length" class="mt-2 flex flex-wrap items-center gap-1.5">
               <span v-for="v in s.votes.slice(0, 8)" :key="v.id || v.name" class="chip chip-plain !px-1.5 !py-0.5" :title="v.name">
-                <Avatar :name="v.name" :size="16" :ring="false" />
+                <Avatar :name="v.name" :size="16" :ring="false" :seed="v.id" />
                 <span class="max-w-[64px] truncate">{{ v.name }}</span>
               </span>
               <span v-if="s.votes.length > 8" class="muted text-[11px]">+{{ s.votes.length - 8 }} 人</span>
@@ -489,11 +501,13 @@ function tagTone(tag) {
           <input
             v-model="form.link"
             class="field"
-            type="url"
-            placeholder="粘贴大众点评 / 携程 / 去哪儿 / 美团等链接,一键跳转"
+            type="text"
+            placeholder="粘贴大众点评 / 携程 / 美团等分享链接(整段文案也行)"
+            @paste="onLinkPaste"
           />
           <p class="muted mt-1.5 text-[11.5px]">
-            <i class="fa-solid fa-circle-info mr-1" aria-hidden="true"></i>保存后卡片上会出现「去预订」按钮,点开直达对应页面
+            <i class="fa-solid fa-circle-info mr-1" aria-hidden="true"></i>
+            支持粘贴整段分享文案,会自动提取链接;去哪儿暂不支持分享链接,请手动填写名称与地址
           </p>
         </div>
         <div>
@@ -507,7 +521,7 @@ function tagTone(tag) {
               :class="form.assignee?.id === p.id ? 'chip-brand' : 'chip-plain opacity-70'"
               @click="form.assignee = form.assignee?.id === p.id ? null : { id: p.id, name: p.name }"
             >
-              <Avatar :name="p.name" :size="18" :ring="false" />{{ p.name }}
+              <Avatar :name="p.name" :size="18" :ring="false" :color="p.color" :seed="p.id" />{{ p.name }}
             </button>
           </div>
         </div>

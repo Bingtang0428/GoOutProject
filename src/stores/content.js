@@ -19,6 +19,7 @@ import { supabase, isSupabase } from '@/api/supabase'
 import { useAuthStore } from '@/stores/auth'
 import * as localDb from '@/api/localDb'
 import { eachDayISO } from '@/utils/date'
+import { toast } from '@/composables/toast'
 
 /** 实体 key ↔ Supabase 表名 映射 */
 const TABLES = {
@@ -125,6 +126,24 @@ export const useContentStore = defineStore('content', () => {
     return data
   }
 
+  /** 合并数组:以本地为准,把服务端独有的项追加到末尾(保住他人同时新增) */
+  function mergeArraysById(serverArr, localArr) {
+    const keyOf = (x) => String((x && (x.id ?? x.name ?? x.key)) ?? JSON.stringify(x))
+    const localKeys = new Set(localArr.map(keyOf))
+    const extra = serverArr.filter((x) => !localKeys.has(keyOf(x)))
+    return [...localArr, ...extra]
+  }
+
+  /** 冲突时把本地 patch 合并到服务端最新行上 */
+  function mergePatch(latest, patch) {
+    const out = {}
+    for (const [k, v] of Object.entries(patch)) {
+      if (Array.isArray(v) && Array.isArray(latest[k])) out[k] = mergeArraysById(latest[k], v)
+      else out[k] = v
+    }
+    return out
+  }
+
   async function remoteUpdate(planId, table, key, id, patch) {
     const list = rows[planId][key]
     const row = list.find((r) => r.id === id)
@@ -139,13 +158,51 @@ export const useContentStore = defineStore('content', () => {
     const before = { ...row }
     const detail = diffDetail(key, before, patch)
     Object.assign(row, patch)
-    const { error } = await supabase.from(table).update(patch).eq('id', id)
+
+    const expected = before.updated_at
+    let query = supabase.from(table).update(patch).eq('id', id)
+    if (expected) query = query.eq('updated_at', expected)
+    const { data, error } = await query.select()
+
     if (error) {
       Object.assign(row, before)
       console.warn(`[content] 更新 ${table} 失败:`, error.message)
-    } else {
-      await maybeLog(planId, key, '更新', labelOf(key, row), detail)
+      toast('保存失败,请稍后重试', 'error')
+      return
     }
+
+    // ★ 乐观锁命中 0 行 = 他人已在你编辑期间改过 → 取最新行做合并后重试
+    if (expected && (!data || data.length === 0)) {
+      const { data: latestArr } = await supabase.from(table).select('*').eq('id', id).limit(1)
+      const latest = latestArr?.[0]
+      if (!latest) {
+        // 已被他人删除
+        rows[planId][key] = rows[planId][key].filter((r) => r.id !== id)
+        toast('该内容已被他人删除', 'info', 3200)
+        return
+      }
+      const merged = mergePatch(latest, patch)
+      const { data: d2, error: e2 } = await supabase
+        .from(table)
+        .update(merged)
+        .eq('id', id)
+        .eq('updated_at', latest.updated_at)
+        .select()
+      if (e2 || !d2 || d2.length === 0) {
+        // 二次冲突:以服务端最新为准并提示
+        applyById(planId, key, latest)
+        toast('该内容正被他人修改,已为你刷新为最新版本', 'info', 3400)
+        return
+      }
+      applyById(planId, key, d2[0])
+      toast('检测到他人同时修改,已自动合并', 'info', 3000)
+      await maybeLog(planId, key, '更新', labelOf(key, merged), detail)
+      return
+    }
+
+    if (data?.[0]) applyById(planId, key, data[0])
+    else applyById(planId, key, row)
+    await maybeLog(planId, key, '更新', labelOf(key, row), detail)
   }
 
   /** 生成「字段:旧 → 新」的人类可读差异 */
@@ -440,21 +497,7 @@ export const useContentStore = defineStore('content', () => {
     const endIdx = list.findIndex((d) => d.stay_role === 'end')
     if (endIdx >= 0) list.splice(endIdx, 0, item)
     else list.push(item)
-    const destinations = list
-    if (!isSupabase) {
-      await persistLocal(planId, 'days', (l) => {
-        const t = l.find((d) => d.date === date)
-        if (t) t.destinations = destinations
-      })
-    } else {
-      day.destinations = destinations // 乐观
-      const { error } = await supabase
-        .from('route_days')
-        .update({ destinations })
-        .eq('plan_id', planId)
-        .eq('date', date)
-      if (error) console.warn('[content] 追加目的地失败:', error.message)
-    }
+    await writeDayRow(planId, date, { destinations: list })
   }
 
   async function ensureDay(planId, date) {
@@ -473,27 +516,11 @@ export const useContentStore = defineStore('content', () => {
     const day = findDay(planId, date)
     if (!day) return
     const destinations = (day.destinations || []).filter((d) => d.id !== destId)
-    if (!isSupabase) {
-      await persistLocal(planId, 'days', (l) => {
-        const t = l.find((d) => d.date === date)
-        if (t) t.destinations = destinations
-      })
-    } else {
-      day.destinations = destinations
-      await supabase.from('route_days').update({ destinations }).eq('plan_id', planId).eq('date', date)
-    }
+    await writeDayRow(planId, date, { destinations })
   }
 
   async function updateDayTitle(planId, date, title) {
-    if (!isSupabase) {
-      await persistLocal(planId, 'days', (l) => {
-        const t = l.find((d) => d.date === date)
-        if (t) t.title = title
-      })
-    } else {
-      const { error } = await supabase.from('route_days').update({ title }).eq('plan_id', planId).eq('date', date)
-      if (error) console.warn('[content] 更新标题失败:', error.message)
-    }
+    await writeDayRow(planId, date, { title })
   }
 
   /** 更新某个目的地的局部字段(坐标 lat/lng、备注等) */
@@ -503,20 +530,7 @@ export const useContentStore = defineStore('content', () => {
     const destinations = (day.destinations || []).map((d) =>
       d.id === destId ? { ...d, ...patch } : d
     )
-    if (!isSupabase) {
-      await persistLocal(planId, 'days', (l) => {
-        const t = l.find((d) => d.date === date)
-        if (t) t.destinations = destinations
-      })
-    } else {
-      day.destinations = destinations
-      const { error } = await supabase
-        .from('route_days')
-        .update({ destinations })
-        .eq('plan_id', planId)
-        .eq('date', date)
-      if (error) console.warn('[content] 更新目的地失败:', error.message)
-    }
+    await writeDayRow(planId, date, { destinations })
   }
 
   /** 调整某天目的地的顺序(dir: -1 上移 / 1 下移);酒店起终点固定不参与 */
@@ -529,20 +543,7 @@ export const useContentStore = defineStore('content', () => {
     if (i < 0 || j < 0 || j >= list.length) return
     if (list[i].stay_role || list[j].stay_role) return
     ;[list[i], list[j]] = [list[j], list[i]]
-    if (!isSupabase) {
-      await persistLocal(planId, 'days', (l) => {
-        const t = l.find((d) => d.date === date)
-        if (t) t.destinations = list
-      })
-    } else {
-      day.destinations = list
-      const { error } = await supabase
-        .from('route_days')
-        .update({ destinations: list })
-        .eq('plan_id', planId)
-        .eq('date', date)
-      if (error) console.warn('[content] 调整顺序失败:', error.message)
-    }
+    await writeDayRow(planId, date, { destinations: list })
   }
 
   // ------------------------------------------------------------
@@ -597,20 +598,7 @@ export const useContentStore = defineStore('content', () => {
     const gone = dests.filter(finder)
     if (!gone.length) return 0
     const keep = dests.filter((d) => !finder(d))
-    if (!isSupabase) {
-      await persistLocal(planId, 'days', (l) => {
-        const t = l.find((d) => d.date === date)
-        if (t) t.destinations = keep
-      })
-    } else {
-      day.destinations = keep
-      const { error } = await supabase
-        .from('route_days')
-        .update({ destinations: keep })
-        .eq('plan_id', planId)
-        .eq('date', date)
-      if (error) console.warn('[content] 移除同步目的地失败:', error.message)
-    }
+    await writeDayRow(planId, date, { destinations: keep })
     await dropDestComments(planId, date, gone.map((d) => d.id))
     return gone.length
   }
@@ -650,23 +638,53 @@ export const useContentStore = defineStore('content', () => {
     await remoteUpdate(planId, 'stays', 'stays', id, { votes })
   }
 
-  /** 持久化某天的 destinations(本地直写 / 云端乐观更新) */
-  async function persistDayDests(planId, date, dests) {
+  /** 带乐观锁的路线日写入:冲突时拉取最新行合并后重试 */
+  async function writeDayRow(planId, date, patch) {
     if (!isSupabase) {
       await persistLocal(planId, 'days', (l) => {
         const t = l.find((d) => d.date === date)
-        if (t) t.destinations = dests
+        if (t) Object.assign(t, patch)
       })
       return
     }
     const day = findDay(planId, date)
-    if (day) day.destinations = dests
-    const { error } = await supabase
-      .from('route_days')
-      .update({ destinations: dests })
-      .eq('plan_id', planId)
-      .eq('date', date)
-    if (error) console.warn('[content] 更新路线失败:', error.message)
+    if (!day) return
+    const expected = day.updated_at
+    Object.assign(day, patch) // 乐观
+    let q = supabase.from('route_days').update(patch).eq('plan_id', planId).eq('date', date)
+    if (expected) q = q.eq('updated_at', expected)
+    const { data, error } = await q.select()
+    if (error) {
+      console.warn('[content] 更新路线日失败:', error.message)
+      return
+    }
+    if (expected && (!data || !data.length)) {
+      const { data: latestArr } = await supabase.from('route_days').select('*').eq('plan_id', planId).eq('date', date).limit(1)
+      const latest = latestArr?.[0]
+      if (!latest) return
+      const merged = mergePatch(latest, patch)
+      const { data: d2 } = await supabase
+        .from('route_days')
+        .update(merged)
+        .eq('plan_id', planId)
+        .eq('date', date)
+        .eq('updated_at', latest.updated_at)
+        .select()
+      if (d2?.[0]) {
+        applyById(planId, 'days', d2[0])
+        toast('检测到他人同时修改,已自动合并', 'info', 3000)
+      } else {
+        applyById(planId, 'days', latest)
+        toast('该日行程正被他人修改,已刷新为最新', 'info', 3400)
+      }
+      return
+    }
+    if (data?.[0]) applyById(planId, 'days', data[0])
+  }
+
+  /** 持久化某天的 destinations(本地直写 / 云端乐观锁) */
+  async function persistDayDests(planId, date, dests) {
+    await writeDayRow(planId, date, { destinations: dests })
   }
 
   /**
@@ -819,17 +837,19 @@ export const useContentStore = defineStore('content', () => {
     return remoteUpdate(planId, 'reminders', 'reminders', id, { read })
   }
 
-  /** 某成员标记已读:记入 reads;当所有指定成员都读过(或无指定成员)时整条关闭 */
-  async function readReminderBy(planId, id, person) {
+  /** 某成员标记已读/取消已读:记入 reads;所有指定成员都读过(或无指定成员)时整条关闭 */
+  async function readReminderBy(planId, id, person, on = true) {
     const row = (rows[planId]?.reminders || []).find((r) => r.id === id)
     if (!row || !person?.name) return
     const reads = [...(row.reads || [])]
-    const already = reads.some((r) => (person.id && r.id === person.id) || (!person.id && r.name === person.name))
-    if (!already) reads.push({ id: person.id || null, name: person.name, at: new Date().toISOString() })
+    const idx = reads.findIndex((r) => (person.id && r.id === person.id) || (!person.id && r.name === person.name))
+    if (on && idx === -1) reads.push({ id: person.id || null, name: person.name, at: new Date().toISOString() })
+    else if (!on && idx !== -1) reads.splice(idx, 1)
+    else return
     const targets = row.targets || []
     const allRead = targets.length
       ? targets.every((t) => reads.some((r) => (t.id && r.id === t.id) || r.name === t.name))
-      : true
+      : on
     await remoteUpdate(planId, 'reminders', 'reminders', id, { reads, read: allRead })
   }
 
@@ -1047,20 +1067,20 @@ export const useContentStore = defineStore('content', () => {
     return remoteDelete(planId, TABLES.gcomments, 'gcomments', id)
   }
 
+  /** 攻略评论点赞/取消点赞 */
+  async function toggleGuideCommentLike(planId, id, person) {
+    const row = (rows[planId]?.gcomments || []).find((c) => c.id === id)
+    if (!row || !person?.name) return
+    const likes = [...(row.likes || [])]
+    const i = likes.findIndex((x) => (person.id && x.id === person.id) || (!person.id && x.name === person.name))
+    if (i === -1) likes.push({ id: person.id || null, name: person.name })
+    else likes.splice(i, 1)
+    await remoteUpdate(planId, TABLES.gcomments, 'gcomments', id, { likes })
+  }
+
   /** 当天 Plan B 预案(雨天/备选路线等) */
   async function updateDayPlanB(planId, date, text) {
-    const day = findDay(planId, date)
-    if (!day) return
-    if (!isSupabase) {
-      await persistLocal(planId, 'days', (l) => {
-        const t = l.find((d) => d.date === date)
-        if (t) t.plan_b = text
-      })
-    } else {
-      day.plan_b = text
-      const { error } = await supabase.from('route_days').update({ plan_b: text }).eq('plan_id', planId).eq('date', date)
-      if (error) console.warn('[content] 更新 Plan B 失败:', error.message)
-    }
+    await writeDayRow(planId, date, { plan_b: text })
   }
 
   function updateFuel(planId, id, patch) {
@@ -1145,24 +1165,53 @@ export const useContentStore = defineStore('content', () => {
     }
   }
 
-  /** 整日 legs 落库(本地直写 / 云端乐观更新) */
-  async function setDriveLegs(planId, date, legs) {
-    const row = findDriveDay(planId, date)
-    if (!row) return
+  /** 带乐观锁的自驾日写入 */
+  async function writeDriveDayRow(planId, date, patch) {
     if (!isSupabase) {
       await persistLocal(planId, 'drive', (l) => {
         const t = l.find((d) => d.date === date)
-        if (t) t.legs = legs
+        if (t) Object.assign(t, patch)
       })
-    } else {
-      row.legs = legs
-      const { error } = await supabase
+      return
+    }
+    const row = findDriveDay(planId, date)
+    if (!row) return
+    const expected = row.updated_at
+    Object.assign(row, patch)
+    let q = supabase.from('drive_days').update(patch).eq('plan_id', planId).eq('date', date)
+    if (expected) q = q.eq('updated_at', expected)
+    const { data, error } = await q.select()
+    if (error) {
+      console.warn('[content] 更新自驾日失败:', error.message)
+      return
+    }
+    if (expected && (!data || !data.length)) {
+      const { data: latestArr } = await supabase.from('drive_days').select('*').eq('plan_id', planId).eq('date', date).limit(1)
+      const latest = latestArr?.[0]
+      if (!latest) return
+      const merged = mergePatch(latest, patch)
+      const { data: d2 } = await supabase
         .from('drive_days')
-        .update({ legs })
+        .update(merged)
         .eq('plan_id', planId)
         .eq('date', date)
-      if (error) console.warn('[content] 更新自驾段失败:', error.message)
+        .eq('updated_at', latest.updated_at)
+        .select()
+      if (d2?.[0]) {
+        applyById(planId, 'drive', d2[0])
+        toast('检测到他人同时修改,已自动合并', 'info', 3000)
+      } else {
+        applyById(planId, 'drive', latest)
+        toast('该日自驾正被他人修改,已刷新为最新', 'info', 3400)
+      }
+      return
     }
+    if (data?.[0]) applyById(planId, 'drive', data[0])
+  }
+
+  /** 整日 legs 落库(本地直写 / 云端乐观锁) */
+  async function setDriveLegs(planId, date, legs) {
+    await writeDriveDayRow(planId, date, { legs })
   }
 
   async function addDriveLeg(planId, date, leg) {
@@ -1209,18 +1258,7 @@ export const useContentStore = defineStore('content', () => {
   }
 
   async function updateDriveDayTitle(planId, date, title) {
-    const row = findDriveDay(planId, date)
-    if (!row) return
-    if (!isSupabase) {
-      await persistLocal(planId, 'drive', (l) => {
-        const t = l.find((d) => d.date === date)
-        if (t) t.title = title
-      })
-    } else {
-      row.title = title
-      const { error } = await supabase.from('drive_days').update({ title }).eq('plan_id', planId).eq('date', date)
-      if (error) console.warn('[content] 更新自驾日主题失败:', error.message)
-    }
+    await writeDriveDayRow(planId, date, { title })
   }
 
   /**
@@ -1301,20 +1339,7 @@ export const useContentStore = defineStore('content', () => {
       days++
       added += dAdded
       updated += dUpdated
-      if (!isSupabase) {
-        await persistLocal(planId, 'days', (l) => {
-          const t = l.find((d) => d.date === dd.date)
-          if (t) t.destinations = dests
-        })
-      } else {
-        day.destinations = dests
-        const { error } = await supabase
-          .from('route_days')
-          .update({ destinations: dests })
-          .eq('plan_id', planId)
-          .eq('date', dd.date)
-        if (error) console.warn('[content] 同步自驾→路线失败:', error.message)
-      }
+      await writeDayRow(planId, dd.date, { destinations: dests })
     }
     return { days, added, updated, removed }
   }
@@ -1388,6 +1413,7 @@ export const useContentStore = defineStore('content', () => {
     removeMemory,
     addGuideComment,
     removeGuideComment,
+    toggleGuideCommentLike,
     updateDayPlanB,
     lastDeleted,
     undoLast,

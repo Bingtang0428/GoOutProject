@@ -81,3 +81,32 @@ export function hostOf(url = '') {
     return ''
   }
 }
+
+/**
+ * 从分享文案中提取 URL 与标题。
+ * 支持:小红书「【标题 - 作者 | 小红书…】 … https://…」、
+ *       携程「#携程旅行#分享酒店:<城市><酒店名>…,https://…」等。
+ * 返回 { url, title }
+ */
+export function parseShareText(raw) {
+  const text = String(raw || '')
+  const m = text.match(/https?:\/\/[^\s，。、；;"'）)】]+/i)
+  const url = m ? m[0].replace(/[)\]】」，。；;、]+$/, '') : ''
+  let title = ''
+  const bracket = text.match(/【([^】]+)】/)
+  if (bracket) {
+    title = bracket[1]
+  } else {
+    // 尖括号内容(携程等):取最长的片段(通常是酒店/景点名,城市名较短)
+    const angles = [...text.matchAll(/<([^>]+)>/g)].map((x) => x[1].trim()).filter(Boolean)
+    if (angles.length) title = angles.sort((a, b) => b.length - a.length)[0]
+    else if (url) title = text.replace(url, ' ').trim()
+  }
+  title = title
+    .split(/\s*[-|｜]\s*/)[0]
+    .replace(/^\d+\s*/, '')
+    .replace(/小红书.*$/, '')
+    .replace(/^#.*?#/, '')
+    .trim()
+  return { url, title }
+}

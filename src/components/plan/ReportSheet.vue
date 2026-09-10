@@ -51,7 +51,7 @@ const peopleCount = computed(() => Math.max(1, props.plan.members?.length || 1))
 
 const byCat = computed(() => {
   const map = new Map()
-  const CATS = { stay: '住宿', food: '餐饮', fuel: '加油', ticket: '门票', toll: '过路', other: '其他' }
+  const CATS = { stay: '住宿', food: '餐饮', fuel: '加油', ticket: '门票', toll: '过路', car: '租车', taxi: '打车', souvenir: '纪念品', other: '其他' }
   for (const b of bills.value) {
     const k = CATS[b.category] || '其他'
     map.set(k, (map.get(k) || 0) + Number(b.amount || 0))

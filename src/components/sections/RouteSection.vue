@@ -261,6 +261,17 @@ function stepIcon(s) {
   return 'fa-bus'
 }
 
+/** 公交明细里只保留乘车段(隐藏步行段细节) */
+function rideSteps(d) {
+  return (d?.transit_detail || []).filter((s) => s.mode !== 'WALK' && !/步行/.test(s.line || ''))
+}
+/** 步行接驳总里程 */
+function walkTotal(d) {
+  return (d?.transit_detail || [])
+    .filter((s) => s.mode === 'WALK' || /步行/.test(s.line || ''))
+    .reduce((n, s) => n + (Number(s.walk_m) || 0), 0)
+}
+
 /** 调整目的地顺序(上移/下移) */
 async function moveDest(day, dest, dir) {
   await store.moveDestination(props.plan.id, day.date, dest.id, dir)
@@ -305,11 +316,26 @@ function scheduleAutoDurations() {
 
 /* ---------------- 换手 / 司机安排 ---------------- */
 const participants = computed(() => (props.plan.members || []).slice())
+/** 车辆数量决定每段最多可选几名司机 */
+const vehicleCount = computed(() => Math.max(1, store.rowsOf(props.plan.id, 'vehicle').length))
 
-async function setDriver(day, dest, person) {
-  await store.updateDestinationFields(props.plan.id, day.date, dest.id, {
-    driver: person ? { id: person.id, name: person.name } : null
-  })
+/** 该段司机列表(兼容旧的单个 driver 字段) */
+function driversOf(d) {
+  if (Array.isArray(d.drivers) && d.drivers.length) return d.drivers
+  return d.driver ? [d.driver] : []
+}
+
+async function toggleDriver(day, dest, person) {
+  const list = driversOf(dest)
+  const i = list.findIndex((x) => x.id === person.id)
+  let next
+  if (i === -1) {
+    if (list.length >= vehicleCount.value) return
+    next = [...list, { id: person.id, name: person.name }]
+  } else {
+    next = list.filter((x) => x.id !== person.id)
+  }
+  await store.updateDestinationFields(props.plan.id, day.date, dest.id, { drivers: next, driver: null })
 }
 
 /** 当日累计自驾分钟 ≥240(约 4 小时)时建议换手/休息 */
@@ -1074,8 +1100,8 @@ watch(
                       </span>
                     </p>
                     <p v-if="d.note" class="mt-0.5 text-[12.5px] leading-relaxed text-muted">{{ d.note }}</p>
-                    <!-- 交通方式:自驾 / 公交 / 步行,并展示详细行程 -->
-                    <div v-if="canEdit" class="mt-1.5 flex flex-wrap items-center gap-1.5">
+                    <!-- 交通方式:自驾 / 公交 / 步行(每天第一个行程无需选择) -->
+                    <div v-if="canEdit && di > 0" class="mt-1.5 flex flex-wrap items-center gap-1.5">
                       <button
                         v-for="m in [
                           { key: 'car', icon: 'fa-car-side', label: '自驾' },
@@ -1134,34 +1160,33 @@ watch(
                         <i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i>算路程
                       </button>
                     </div>
-                    <!-- 公交详细行程(地铁/公交/轮渡/步行接驳) -->
+                    <!-- 公交详细行程:只展示乘车段与换乘,不展开步行细节 -->
                     <div
-                      v-if="d.mode === 'transit' && d.transit_detail?.length"
+                      v-if="d.mode === 'transit' && rideSteps(d).length"
                       class="mt-1.5 space-y-1 rounded-[10px] bg-surface-2/60 px-2.5 py-2"
                     >
-                      <p class="flex items-center gap-1.5 text-[11px] font-semibold text-primary">
+                      <p class="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] font-semibold text-primary">
                         <i class="fa-solid fa-route text-[10px]" aria-hidden="true"></i>
-                        全程约 {{ fmtMinute(d.transit_min) }}<template v-if="d.distance_km"> · {{ d.distance_km }} km</template><template v-if="d.transit_cost"> · 票价约 ¥{{ d.transit_cost }}</template>
+                        全程约 {{ fmtMinute(d.transit_min) }}
+                        <template v-if="d.distance_km"> · {{ d.distance_km }} km</template>
+                        <template v-if="rideSteps(d).length > 1"> · 换乘 {{ rideSteps(d).length - 1 }} 次</template>
+                        <template v-if="walkTotal(d)"> · 步行接驳约 {{ walkTotal(d) }} 米</template>
+                        <template v-if="d.transit_cost"> · 票价约 ¥{{ d.transit_cost }}</template>
                       </p>
                       <ol class="space-y-1">
                         <li
-                          v-for="(s, si) in d.transit_detail"
+                          v-for="(s, si) in rideSteps(d)"
                           :key="si"
                           class="flex items-start gap-1.5 text-[11.5px] leading-5 text-ink-soft"
                         >
                           <i :class="`fa-solid ${stepIcon(s)} mt-1 text-[10px] text-primary/70`" aria-hidden="true"></i>
                           <span class="min-w-0">
-                            <template v-if="s.mode === 'WALK' || /步行/.test(s.line || '')">
-                              步行 {{ s.walk_m || 0 }} 米<template v-if="s.walk_min">(约 {{ s.walk_min }} 分钟)</template>
-                              <span v-if="s.instruction" class="muted"> · {{ s.instruction }}</span>
-                            </template>
-                            <template v-else>
-                              <b class="font-semibold text-ink">{{ s.line }}</b>
-                              <template v-if="s.from"> 从「{{ s.from }}」上车</template>
-                              <template v-if="s.to"> 到「{{ s.to }}」下车</template>
-                              <template v-if="s.via_stops"> · 经 {{ s.via_stops }} 站</template>
-                              <template v-if="s.min"> · 约 {{ s.min }} 分钟</template>
-                            </template>
+                            <b class="font-semibold text-ink">{{ s.line }}</b>
+                            <template v-if="s.from"> · 「{{ s.from }}」上车</template>
+                            <template v-if="s.to"> → 「{{ s.to }}」下车</template>
+                            <template v-if="s.via_stops"> · 经 {{ s.via_stops }} 站</template>
+                            <template v-if="s.min"> · 约 {{ s.min }} 分钟</template>
+                            <span v-if="si < rideSteps(d).length - 1" class="chip chip-plain ml-1 !px-1.5 !py-0 !text-[10px]">换乘</span>
                           </span>
                         </li>
                       </ol>
@@ -1193,32 +1218,33 @@ watch(
                         <span><i class="fa-solid fa-person-walking text-[10px]" aria-hidden="true"></i> 步行约 {{ fmtMinute(d.walk_min) }}</span>
                       </template>
                     </p>
-                    <!-- 换手 / 司机安排 -->
-                    <div class="mt-1.5 flex flex-wrap items-center gap-1.5">
+                    <!-- 换手 / 司机安排(仅自驾段;公交/步行无司机,每天第一段也无需) -->
+                    <div v-if="di > 0 && (d.mode || 'car') === 'car'" class="mt-1.5 flex flex-wrap items-center gap-1.5">
                       <i
                         class="fa-solid fa-arrows-rotate text-[10px]"
                         :class="handoverFor(d.id) ? 'text-amber' : 'text-primary/40'"
                         aria-hidden="true"
                       ></i>
                       <template v-if="canEdit && participants.length">
+                        <span class="muted text-[11px]">司机(最多 {{ vehicleCount }} 名):</span>
                         <button
                           v-for="p in participants"
                           :key="p.id"
                           type="button"
                           class="chip !px-1.5 !py-0.5 transition-all duration-150 active:scale-90"
-                          :class="d.driver?.id === p.id ? 'chip-brand' : 'chip-plain opacity-70'"
-                          :title="d.driver?.id === p.id ? `取消 ${p.name} 负责此段` : `${p.name} 负责此段`"
-                          @click="setDriver(day, d, d.driver?.id === p.id ? null : p)"
+                          :class="driversOf(d).some((x) => x.id === p.id) ? 'chip-brand' : 'chip-plain opacity-70'"
+                          :title="driversOf(d).some((x) => x.id === p.id) ? `取消 ${p.name} 负责此段` : `${p.name} 负责此段`"
+                          @click="toggleDriver(day, d, p)"
                         >
-                          <Avatar :name="p.name" :size="16" :ring="false" />
+                          <Avatar :name="p.name" :size="16" :ring="false" :seed="p.id" />
                           {{ p.name }}
                         </button>
-                        <span v-if="d.driver" class="chip chip-success !py-0.5 !text-[11px]">
-                          <i class="fa-solid fa-check" aria-hidden="true"></i>{{ d.driver.name }} 开此段
+                        <span v-if="driversOf(d).length" class="chip chip-success !py-0.5 !text-[11px]">
+                          <i class="fa-solid fa-check" aria-hidden="true"></i>{{ driversOf(d).map((x) => x.name).join('、') }} 开此段
                         </span>
                       </template>
-                      <span v-else-if="d.driver" class="text-[11.5px] text-muted">
-                        <i class="fa-solid fa-user mr-1" aria-hidden="true"></i>司机:{{ d.driver.name }}
+                      <span v-else-if="driversOf(d).length" class="text-[11.5px] text-muted">
+                        <i class="fa-solid fa-user mr-1" aria-hidden="true"></i>司机:{{ driversOf(d).map((x) => x.name).join('、') }}
                       </span>
                       <span
                         v-if="handoverFor(d.id)"

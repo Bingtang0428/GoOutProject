@@ -46,6 +46,9 @@ const CATS = [
   { key: 'fuel', icon: 'fa-gas-pump', label: '加油', tone: 'plain' },
   { key: 'ticket', icon: 'fa-ticket', label: '门票', tone: 'brand' },
   { key: 'toll', icon: 'fa-road', label: '过路', tone: 'plain' },
+  { key: 'car', icon: 'fa-car-side', label: '租车', tone: 'brand' },
+  { key: 'taxi', icon: 'fa-taxi', label: '打车', tone: 'amber' },
+  { key: 'souvenir', icon: 'fa-gift', label: '纪念品', tone: 'brand' },
   { key: 'other', icon: 'fa-ellipsis', label: '其他', tone: 'plain' }
 ]
 
@@ -117,7 +120,7 @@ function openEdit(b) {
     category: b.category,
     paid_by: b.paid_by ? { id: b.paid_by.id, name: b.paid_by.name } : null,
     involves: (b.involves || []).map((i) => ({ id: i.id, name: i.name })),
-    split: b.split === 'custom' ? 'custom' : 'equal',
+    split: b.split === 'custom' ? 'custom' : b.split === 'none' ? 'none' : 'equal',
     shares: { ...(b.shares || {}) },
     link: b.link || null,
     note: b.note || ''
@@ -133,7 +136,9 @@ function toggleInvolve(p) {
 
 function amountValid() {
   const n = Number(form.amount)
-  return !!(form.name.trim() && form.paid_by && form.involves.length && Number.isFinite(n) && n > 0)
+  const base = !!(form.name.trim() && Number.isFinite(n) && n > 0)
+  if (form.split === 'none') return base
+  return base && form.involves.length > 0
 }
 
 async function save() {
@@ -145,8 +150,8 @@ async function save() {
     amount: Math.round(Number(form.amount) * 100) / 100,
     date: form.date,
     category: form.category,
-    paid_by: { id: form.paid_by.id, name: form.paid_by.name },
-    involves: form.involves,
+    paid_by: form.paid_by ? { id: form.paid_by.id, name: form.paid_by.name } : null,
+    involves: form.split === 'none' ? [] : form.involves,
     split: form.split,
     shares:
       form.split === 'custom'
@@ -181,7 +186,7 @@ function sharesFor(b) {
   const list = b.involves || []
   const n = list.length
   const out = new Map()
-  if (!n) return out
+  if (b.split === 'none' || !n) return out
   if (b.split !== 'custom') {
     const each = Number(b.amount || 0) / n
     for (const inv of list) out.set(inv.id, each)
@@ -196,6 +201,7 @@ const settlement = computed(() => {
   const stat = new Map()
   for (const p of people.value) stat.set(p.id, { id: p.id, name: p.name, credit: 0, share: 0, count: 0 })
   for (const b of bills.value) {
+    if (b.split === 'none') continue // 不分摊(个人支出)不计入结算
     const shareMap = sharesFor(b)
     for (const inv of b.involves || []) {
       const s = stat.get(inv.id)
@@ -235,7 +241,7 @@ const totalAmount = computed(() => bills.value.reduce((s, b) => s + Number(b.amo
 const catOf = (key) => CATS.find((c) => c.key === key) || CATS[CATS.length - 1]
 
 /** 显示名称;若成员已离开计划则取快照 */
-const whoName = (ref) => ref?.name || '未知'
+const whoName = (ref) => ref?.name || '未指定'
 
 function linkChip(b) {
   if (!b.link) return ''
@@ -318,7 +324,7 @@ function linkChip(b) {
     <div v-if="settlement.length" class="mb-8 grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-4">
       <div v-for="s in settlement" :key="s.id" class="card card-lift p-5">
         <div class="mb-3 flex items-center gap-2.5">
-          <Avatar :name="s.name" :size="30" />
+          <Avatar :name="s.name" :size="30" :seed="s.id" />
           <div class="min-w-0">
             <p class="truncate text-[13.5px] font-semibold text-ink">{{ s.name }}</p>
             <p class="text-[11px] text-muted">参与 {{ s.count }} 笔分摊</p>
@@ -373,10 +379,18 @@ function linkChip(b) {
               <BaseTag v-if="b.split === 'custom'" tone="plain" class="!text-[11px]">
                 <i class="fa-solid fa-sliders mr-1" aria-hidden="true"></i>自定义份额
               </BaseTag>
+              <BaseTag v-else-if="b.split === 'none'" tone="plain" class="!text-[11px]">
+                <i class="fa-solid fa-ban mr-1" aria-hidden="true"></i>不分摊
+              </BaseTag>
             </p>
             <p class="mt-1 flex flex-wrap items-center gap-2 text-[12px] text-muted">
-              <Avatar :name="whoName(b.paid_by)" :size="18" :ring="false" />
-              <span>{{ whoName(b.paid_by) }} 垫付</span>
+              <template v-if="b.paid_by">
+                <Avatar :name="whoName(b.paid_by)" :size="18" :ring="false" />
+                <span>{{ whoName(b.paid_by) }} 垫付</span>
+              </template>
+              <span v-else class="chip chip-plain !px-1.5 !py-0 !text-[11px]">
+                <i class="fa-solid fa-user-slash mr-1" aria-hidden="true"></i>未指定付款人
+              </span>
               <span class="chip chip-plain !px-1.5 !py-0 !text-[11px]">
                 <i class="fa-regular fa-calendar mr-1" aria-hidden="true"></i>{{ fmtDay(b.date, false) }}
               </span>
@@ -395,7 +409,7 @@ function linkChip(b) {
               <template v-for="(p, i) in b.involves" :key="p.id">
                 <span v-if="i" class="mx-0.5 text-primary/40">·</span>{{ p.name }}
               </template>
-              <span v-if="!b.involves?.length">无人分摊</span>
+              <span v-if="!b.involves?.length">{{ b.split === 'none' ? '不分摊' : '无人分摊' }}</span>
             </p>
           </div>
           <div v-if="canEdit" class="flex shrink-0 gap-1">
@@ -456,8 +470,16 @@ function linkChip(b) {
         </div>
 
         <div>
-          <label class="flabel">谁付的钱</label>
+          <label class="flabel">谁付的钱(可不选)</label>
           <div class="flex flex-wrap gap-2">
+            <button
+              type="button"
+              class="chip transition-all duration-200 ease-out active:scale-95"
+              :class="!form.paid_by ? 'chip-brand' : 'chip-plain'"
+              @click="form.paid_by = null"
+            >
+              <i class="fa-solid fa-user-slash text-[11px]" aria-hidden="true"></i>不指定
+            </button>
             <button
               v-for="p in people"
               :key="p.id"
@@ -466,14 +488,14 @@ function linkChip(b) {
               :class="form.paid_by?.id === p.id ? 'chip-brand' : 'chip-plain'"
               @click="form.paid_by = { id: p.id, name: p.name }"
             >
-              <Avatar :name="p.name" :size="18" :ring="false" />{{ p.name }}
+              <Avatar :name="p.name" :size="18" :ring="false" :color="p.color" :seed="p.id" />{{ p.name }}
             </button>
           </div>
         </div>
 
         <div>
           <label class="flabel">分摊方式</label>
-          <div class="flex gap-2">
+          <div class="flex flex-wrap gap-2">
             <button
               type="button"
               class="chip flex-1 cursor-pointer !px-3 !py-2.5 text-center transition-all duration-150 active:scale-95"
@@ -488,12 +510,20 @@ function linkChip(b) {
               :class="form.split === 'custom' ? 'chip-brand' : 'chip-plain'"
               @click="form.split = 'custom'"
             >
-              <i class="fa-solid fa-sliders mr-1" aria-hidden="true"></i>按项目份额(自定义)
+              <i class="fa-solid fa-sliders mr-1" aria-hidden="true"></i>按项目份额
+            </button>
+            <button
+              type="button"
+              class="chip flex-1 cursor-pointer !px-3 !py-2.5 text-center transition-all duration-150 active:scale-95"
+              :class="form.split === 'none' ? 'chip-brand' : 'chip-plain'"
+              @click="form.split = 'none'"
+            >
+              <i class="fa-solid fa-ban mr-1" aria-hidden="true"></i>不分摊
             </button>
           </div>
         </div>
 
-        <div>
+        <div v-if="form.split !== 'none'">
           <label class="flabel">这笔钱涉及谁(参与分摊)</label>
           <div class="flex flex-wrap gap-2">
             <button

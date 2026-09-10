@@ -110,6 +110,7 @@ create table if not exists public.guide_comments (
   author     jsonb,
   created_at timestamptz not null default now()
 );
+alter table public.guide_comments add column if not exists likes jsonb not null default '[]'::jsonb;
 
 -- 提醒事项(read = 已读,页面中已读项自动变淡)
 create table if not exists public.reminders (
@@ -141,6 +142,10 @@ create table if not exists public.bills (
   created_at  timestamptz not null default now()
 );
 alter table public.bills add column if not exists date date not null default current_date;
+-- 分类扩充:租车/打车/纪念品
+alter table public.bills drop constraint if exists bills_category_check;
+alter table public.bills add constraint bills_category_check
+  check (category in ('stay','food','fuel','ticket','toll','car','taxi','souvenir','other'));
 
 -- 行程变更日志:谁在何时改了什么(多人协作留痕)
 create table if not exists public.plan_logs (
@@ -411,6 +416,27 @@ create index if not exists idx_bills_plan         on public.bills(plan_id);
 create index if not exists idx_comments_plan      on public.comments(plan_id);
 create index if not exists idx_transits_plan      on public.transits(plan_id);
 create index if not exists idx_fuel_logs_plan     on public.fuel_logs(plan_id);
+
+-- -------------------------------------------------------------
+-- 并发编辑保护:所有内容表加 updated_at,更新时由触发器自动刷新。
+-- 客户端用它做乐观锁,避免多人同时编辑时互相覆盖(冲突自动合并)。
+-- -------------------------------------------------------------
+create or replace function public.set_updated_at()
+returns trigger language plpgsql as $$
+begin
+  new.updated_at = now();
+  return new;
+end; $$;
+
+do $$
+declare t text;
+begin
+  foreach t in array array['plans','route_days','drive_days','stays','todos','guides','reminders','bills','comments','transits','vehicles','fuel_logs','memories','guide_comments'] loop
+    execute format('alter table public.%I add column if not exists updated_at timestamptz not null default now()', t);
+    execute format('drop trigger if exists trg_%s_updated on public.%I', t, t);
+    execute format('create trigger trg_%s_updated before update on public.%I for each row execute function public.set_updated_at()', t, t);
+  end loop;
+end $$;
 
 -- -------------------------------------------------------------
 -- RLS:演示阶段允许匿名读写。正式环境请替换为基于 auth.uid() 的策略!

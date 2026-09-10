@@ -13,7 +13,7 @@ const props = defineProps({
   <div class="flex items-center">
     <template v-for="(u, i) in users.slice(0, max)" :key="u.id || i">
       <div class="-ml-1.5 first:ml-0">
-        <Avatar :name="u.name" :size="size" />
+        <Avatar :name="u.name" :size="size" :color="u.color" :seed="u.id" />
       </div>
     </template>
     <span

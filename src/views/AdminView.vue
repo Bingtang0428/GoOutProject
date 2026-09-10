@@ -426,7 +426,7 @@ async function deletePlan(plan) {
                   class="chip chip-plain gap-1.5 !px-2"
                   :title="m.id === p.owner_id ? '创建者' : '参与者'"
                 >
-                  <Avatar :name="m.name" :size="18" :ring="false" />
+                  <Avatar :name="m.name" :size="18" :ring="false" :color="m.color" :seed="m.id" />
                   {{ m.name }}
                   <i v-if="m.id === p.owner_id" class="fa-solid fa-crown text-[9px] text-amber" aria-hidden="true"></i>
                   <i
@@ -441,7 +441,7 @@ async function deletePlan(plan) {
                   class="chip chip-plain gap-1.5 !px-2 opacity-75"
                   title="围观者(只读)"
                 >
-                  <Avatar :name="v.name" :size="18" :ring="false" />
+                  <Avatar :name="v.name" :size="18" :ring="false" :color="v.color" :seed="v.id" />
                   {{ v.name }}
                   <i class="fa-solid fa-xmark cursor-pointer opacity-50 hover:opacity-100" @click="removePerson(p, v.id, false)"></i>
                 </span>
