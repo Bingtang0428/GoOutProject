@@ -298,14 +298,14 @@ onBeforeUnmount(() => {
         <!-- 计划头部 Hero:标题 / 日期 / 成员 -->
         <section class="card visual relative overflow-hidden p-5 sm:p-8" :style="gradStyle">
           <span class="pointer-events-none absolute -right-10 -top-14 h-48 w-48 rounded-full bg-white/30 blur-2xl" style="mix-blend-mode: overlay"></span>
-          <div class="relative flex flex-wrap items-start justify-between gap-6">
-            <div class="min-w-0 flex-1">
+          <div class="relative flex flex-wrap items-start justify-between gap-x-6 gap-y-4">
+            <div class="min-w-0 flex-1 lg:min-w-[340px]">
               <div class="mb-3 flex flex-wrap items-center gap-2">
-                <span class="chip chip-plain hero-surface">
+                <span class="chip chip-plain hero-surface whitespace-nowrap">
                   <i class="fa-solid fa-location-dot text-[11px] text-primary" aria-hidden="true"></i>
                   {{ plan.destination || '目的地待定' }}
                 </span>
-                <span class="chip chip-plain hero-surface">
+                <span class="chip chip-plain hero-surface whitespace-nowrap">
                   <i class="fa-regular fa-calendar text-[11px]" aria-hidden="true"></i>
                   {{ fmtRange(plan.start_date, plan.end_date) }} · {{ planDays(plan.start_date, plan.end_date) }} 天
                 </span>
@@ -320,7 +320,7 @@ onBeforeUnmount(() => {
                 <AvatarStack :users="plan.members" :size="30" :max="5" />
                 <span
                   v-if="onlineUsers.length"
-                  class="chip hero-surface"
+                  class="chip hero-surface whitespace-nowrap"
                   :title="onlineUsers.map((u) => u.name).join('、')"
                 >
                   <span class="dot" style="background: #16a34a"></span>{{ onlineUsers.length }} 人在线
@@ -340,8 +340,8 @@ onBeforeUnmount(() => {
               </button>
             </div>
 
-            <!-- 桌面操作 -->
-            <div class="hidden items-center gap-2 md:flex">
+            <!-- 桌面操作(窄屏自动换到下一行) -->
+            <div class="hidden flex-wrap items-center gap-2 lg:flex">
               <button v-if="isSupabase" class="btn btn-ghost btn-sm hero-surface" @click="openLogs">
                 <i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i>最近动态
                 <span v-if="logsUnread" class="chip chip-rose !px-1.5 !py-0 !text-[10px]">{{ logsUnread }}</span>
@@ -372,21 +372,21 @@ onBeforeUnmount(() => {
 
           <!-- 概要统计小徽标 -->
           <div class="relative mt-6 flex flex-wrap gap-2">
-            <button class="chip hero-surface" @click="goSec('route')">
+            <button class="chip hero-surface whitespace-nowrap" @click="goSec('route')">
               <i class="fa-solid fa-map-pin text-[11px] text-primary" aria-hidden="true"></i>{{ stats.dest || 0 }} 地点
             </button>
-            <button class="chip hero-surface" @click="goSec('stay')">
+            <button class="chip hero-surface whitespace-nowrap" @click="goSec('stay')">
               <i class="fa-solid fa-bed text-[11px] text-primary" aria-hidden="true"></i>{{ stats.stays || 0 }} 家
             </button>
-            <button class="chip hero-surface" @click="goSec('todo')">
+            <button class="chip hero-surface whitespace-nowrap" @click="goSec('todo')">
               <i class="fa-solid fa-circle-check text-[11px] text-primary" aria-hidden="true"></i>
               待办 {{ stats.todoPct || 0 }}%
             </button>
-            <button class="chip hero-surface" @click="goSec('reminder')">
+            <button class="chip hero-surface whitespace-nowrap" @click="goSec('reminder')">
               <i class="fa-solid fa-bell text-[11px] text-amber" aria-hidden="true"></i>
               {{ stats.unread || 0 }} 条未读提醒
             </button>
-            <button class="chip hero-surface" @click="goSec('bill')">
+            <button class="chip hero-surface whitespace-nowrap" @click="goSec('bill')">
               <i class="fa-solid fa-scale-balanced text-[11px] text-primary" aria-hidden="true"></i>
               {{ stats.bills || 0 }} 笔分账
             </button>
