@@ -43,7 +43,15 @@ function roadsViaText(lg) {
     .join('、')
 }
 const todos = computed(() => content.rowsOf(props.plan.id, 'todos'))
-const transits = computed(() => content.rowsOf(props.plan.id, 'transits'))
+
+/** 某目的地的「上一站→本站」路程描述 */
+function legText(x) {
+  if (x.mode === 'walk' && x.walk_min) return `步行约 ${x.walk_min} 分钟${x.distance_km ? ' · ' + x.distance_km + 'km' : ''}`
+  if (x.mode === 'transit' && x.transit_detail?.length) return fmtTransitSteps(x.transit_detail)
+  if (x.mode === 'transit' && x.transit_min) return `公交约 ${x.transit_min} 分钟`
+  if (x.drive_min) return `自驾约 ${x.drive_min} 分钟${x.distance_km ? ' · ' + x.distance_km + 'km' : ''}`
+  return ''
+}const transits = computed(() => content.rowsOf(props.plan.id, 'transits'))
 const reminders = computed(() => content.rowsOf(props.plan.id, 'reminders'))
 const bills = computed(() => content.rowsOf(props.plan.id, 'bills'))
 const vehicles = computed(() => content.rowsOf(props.plan.id, 'vehicle'))
@@ -217,22 +225,20 @@ const grad = computed(() => {
                     第 {{ di + 1 }} 天 · {{ fmtDay(d.date, true) }}
                     <template v-if="d.title">—— {{ d.title }}</template>
                   </p>
-                  <p v-if="d.destinations?.length" class="mb-1">
-                    <span v-for="(x, i) in d.destinations" :key="x.id" class="print-dest">
-                      {{ x.time || '全天' }} {{ x.place }}
-                      <template v-if="x.mode === 'walk' && x.walk_min">(步行约 {{ x.walk_min }} 分钟<template v-if="x.distance_km"> · {{ x.distance_km }}km</template>)</template>
-                      <template v-else-if="x.mode === 'transit' && x.transit_detail?.length">({{ fmtTransitSteps(x.transit_detail) }})</template>
-                      <template v-else-if="x.transit_min">(公交约 {{ x.transit_min }} 分钟)</template>
-                      <template v-else-if="x.drive_min">(自驾约 {{ x.drive_min }} 分钟)</template>
-                      <template v-if="i < d.destinations.length - 1"> → </template>
-                    </span>
-                  </p>
+                  <div v-if="d.destinations?.length" class="print-dest-list">
+                    <div v-for="x in d.destinations" :key="x.id" class="print-dest-row">
+                      <span class="print-dest-time">{{ x.time || '全天' }}</span>
+                      <span class="print-dest-place">
+                        {{ x.place }}
+                        <span v-if="x.stay_role === 'start'" class="print-tag">起点·酒店</span>
+                        <span v-else-if="x.stay_role === 'end'" class="print-tag">终点·回酒店</span>
+                        <span v-else-if="x.stay_link" class="print-tag">住宿/餐厅</span>
+                        <span v-if="legText(x)" class="print-dest-leg">{{ legText(x) }}</span>
+                        <span v-if="x.note" class="print-dest-note">{{ x.note }}</span>
+                      </span>
+                    </div>
+                  </div>
                   <p v-else class="text-[12px] italic" style="color:#9a7a86">待安排</p>
-                  <p v-if="(d.destinations || []).some((x) => x.note)" class="mt-1">
-                    <span v-for="x in d.destinations.filter((y) => y.note)" :key="'n' + x.id" class="block text-[11.5px]" style="color:#7c5a66">
-                      · {{ x.place }}:{{ x.note }}
-                    </span>
-                  </p>
                   <!-- 当日自驾明细(起终点/时长/里程/过路/途经道路) -->
                   <p v-if="driveOf(d.date)?.legs?.length" class="mt-1.5 space-y-0.5 border-l-2 pl-2" style="border-color:#f3d9e2">
                     <span v-for="(lg, li) in driveOf(d.date).legs" :key="lg.id" class="block text-[11.5px] leading-5" style="color:#6d4a58">
@@ -354,11 +360,38 @@ const grad = computed(() => {
 
 <style scoped>
 /* 供导出的打印/长图样式 */
-.export-pad { padding: 4px 6px; } /* 屏幕预览时内衬,避免内容贴边 */
+.export-pad { padding: 12px 16px; } /* 屏幕预览时内衬,避免内容贴边 */
 @media print {
-  .export-pad { padding: 4mm 5mm !important; } /* 纸张上四周留白,页面不拥挤 */
-  .print-h2 { margin-top: 8mm; }
+  .export-pad { padding: 8mm 10mm !important; } /* 纸张上四周留白,页面不拥挤 */
+  .print-h2 { margin-top: 9mm; }
 }
+/* 每日路线:每条地点独立成行,时间/地点/路程/备注层次清晰 */
+.print-dest-list { margin: 4px 0 2px; }
+.print-dest-row {
+  display: flex;
+  gap: 10px;
+  padding: 4px 0;
+  border-bottom: 1px dashed #f3e3ea;
+}
+.print-dest-row:last-child { border-bottom: none; }
+.print-dest-time {
+  flex: none;
+  width: 54px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #b75973;
+}
+.print-dest-place { flex: 1; font-size: 13px; color: #3d2931; line-height: 1.55; }
+.print-tag {
+  margin-left: 6px;
+  border-radius: 999px;
+  background: #fdf4f8;
+  padding: 0 7px;
+  font-size: 10.5px;
+  color: #b75973;
+}
+.print-dest-leg { display: block; margin-top: 2px; font-size: 11px; color: #9a7a86; }
+.print-dest-note { display: block; margin-top: 1px; font-size: 11.5px; color: #7c5a66; }
 .print-h2 {
   margin-top: 26px;
   margin-bottom: 6px;

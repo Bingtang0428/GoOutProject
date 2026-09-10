@@ -7,7 +7,7 @@
 //  - 本地/无代理:OSRM 公共路由估算;再不可用时直线距离兜底
 // ============================================================
 import { isSupabase } from '@/api/supabase'
-import { gcj2wgs } from '@/api/geocode'
+import { gcj2wgs, wgs2gcj } from '@/api/geocode'
 
 /** haversine 公里数 */
 export function distKm(a, b) {
@@ -32,9 +32,12 @@ function legKey(a, b) {
  */
 async function amapLeg(a, b) {
   try {
+    // ★ 高德接口使用 GCJ-02 坐标,库内为 WGS84,发送前转换
+    const ga = wgs2gcj(a.lat, a.lng)
+    const gb = wgs2gcj(b.lat, b.lng)
     const u = new URL('/api/driving', window.location.origin)
-    u.searchParams.set('from', `${a.lng},${a.lat}`)
-    u.searchParams.set('to', `${b.lng},${b.lat}`)
+    u.searchParams.set('from', `${ga.lng},${ga.lat}`)
+    u.searchParams.set('to', `${gb.lng},${gb.lat}`)
     const res = await fetch(u.toString())
     const j = await res.json()
     if (!j?.ok) return null
@@ -125,9 +128,11 @@ export async function drivingMinutes(a, b, force = false) {
 export async function transitLeg(a, b, city = '') {
   if (!a || !b || !a.lat || !a.lng || !b.lat || !b.lng || !isSupabase) return null
   try {
+    const ga = wgs2gcj(a.lat, a.lng)
+    const gb = wgs2gcj(b.lat, b.lng)
     const u = new URL('/api/transit', window.location.origin)
-    u.searchParams.set('from', `${a.lng},${a.lat}`)
-    u.searchParams.set('to', `${b.lng},${b.lat}`)
+    u.searchParams.set('from', `${ga.lng},${ga.lat}`)
+    u.searchParams.set('to', `${gb.lng},${gb.lat}`)
     if (city) u.searchParams.set('city', city)
     const res = await fetch(u.toString())
     const j = await res.json()
@@ -142,9 +147,11 @@ export async function transitLeg(a, b, city = '') {
 export async function walkingLeg(a, b) {
   if (!a || !b || !a.lat || !a.lng || !b.lat || !b.lng || !isSupabase) return null
   try {
+    const ga = wgs2gcj(a.lat, a.lng)
+    const gb = wgs2gcj(b.lat, b.lng)
     const u = new URL('/api/walking', window.location.origin)
-    u.searchParams.set('from', `${a.lng},${a.lat}`)
-    u.searchParams.set('to', `${b.lng},${b.lat}`)
+    u.searchParams.set('from', `${ga.lng},${ga.lat}`)
+    u.searchParams.set('to', `${gb.lng},${gb.lat}`)
     const res = await fetch(u.toString())
     const j = await res.json()
     if (!j?.ok) return null

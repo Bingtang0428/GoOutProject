@@ -11,6 +11,8 @@ import { useRouter, useRoute } from 'vue-router'
 import { useHead } from '@vueuse/head'
 import { usePlansStore } from '@/stores/plans'
 import { useContentStore } from '@/stores/content'
+import { useAuthStore } from '@/stores/auth'
+import { createPresence } from '@/composables/presence'
 import { pastelOf } from '@/utils/misc'
 import { fmtRange, planDays, todayISO, relKey } from '@/utils/date'
 import DesktopSidebar from '@/components/layout/DesktopSidebar.vue'
@@ -23,6 +25,7 @@ import Avatar from '@/components/ui/Avatar.vue'
 import BaseTag from '@/components/ui/BaseTag.vue'
 import AvatarStack from '@/components/ui/AvatarStack.vue'
 import RouteSection from '@/components/sections/RouteSection.vue'
+import TodaySection from '@/components/sections/TodaySection.vue'
 import DriveSection from '@/components/sections/DriveSection.vue'
 import StaySection from '@/components/sections/StaySection.vue'
 import TodoSection from '@/components/sections/TodoSection.vue'
@@ -41,6 +44,7 @@ import IssuesSheet from '@/components/plan/IssuesSheet.vue'
 
 const plansStore = usePlansStore()
 const contentStore = useContentStore()
+const auth = useAuthStore()
 const router = useRouter()
 const route = useRoute()
 
@@ -53,6 +57,7 @@ useHead({
 
 // —— 区块:以 URL query.sec 作为唯一状态,方便底部 Tab/桌面胶囊互相同步
 const SECTIONS = [
+  { key: 'today', icon: 'fa-sun', label: '今日视图' },
   { key: 'route', icon: 'fa-route', label: '路线规划' },
   { key: 'drive', icon: 'fa-car-side', label: '自驾规划' },
   { key: 'stay', icon: 'fa-bed', label: '食宿安排' },
@@ -67,6 +72,8 @@ const SECTIONS = [
 const myRole = computed(() => plansStore.myRole(plan.value))
 const canEdit = computed(() => plansStore.canEditContent(plan.value))
 const isOwner = computed(() => myRole.value === 'owner')
+/** 创建者或系统管理员可管理成员与头像配色 */
+const canManage = computed(() => isOwner.value || Boolean(auth.isAdmin))
 
 const roleChip = computed(() => {
   return {
@@ -78,7 +85,11 @@ const roleChip = computed(() => {
 
 const activeSec = computed(() => {
   const q = route.query.sec
-  return SECTIONS.some((s) => s.key === q) ? q : 'route'
+  if (SECTIONS.some((s) => s.key === q)) return q
+  // 行程进行中默认落在「今日视图」,其余默认路线
+  const p = plan.value
+  if (p && p.start_date <= todayISO() && p.end_date >= todayISO()) return 'today'
+  return 'route'
 })
 
 function goSec(key) {
@@ -90,6 +101,35 @@ function goSec(key) {
 // —— 计划内容载入 + 实时订阅(切计划时释放旧通道)
 // 覆盖三种场景:URL 直达(需先 init)、路由切换计划、计划日期区间被编辑
 let prevPlanId = null
+
+/* 在线状态(谁在看这份计划) */
+const onlineUsers = ref([])
+let presenceCtl = null
+watch(
+  () => plan.value?.id,
+  (id) => {
+    presenceCtl?.dispose()
+    presenceCtl = null
+    onlineUsers.value = []
+    if (id) presenceCtl = createPresence(id, (list) => (onlineUsers.value = list))
+  },
+  { immediate: true }
+)
+
+/* 变更通知:未读动态数 */
+const logsUnread = ref(0)
+let logsTimer = null
+async function checkLogsUnread() {
+  if (!isSupabase || !plan.value) return
+  const seen = localStorage.getItem(`tx:logs-seen:${plan.value.id}`) || '1970-01-01T00:00:00Z'
+  const { count } = await supabase
+    .from('plan_logs')
+    .select('id', { count: 'exact', head: true })
+    .eq('plan_id', plan.value.id)
+    .gt('at', seen)
+  logsUnread.value = count || 0
+}
+
 async function loadPlan() {
   await plansStore.init() // 保证计划列表已就绪(深度链接直达时也安全)
   if (!plan.value) {
@@ -102,6 +142,8 @@ async function loadPlan() {
   await contentStore.ensureLoaded(plan.value)
   await contentStore.ensureDayRows(plan.value) // 日期区间变化时补齐每日占位
   await contentStore.ensureDriveDayRows(plan.value) // 自驾规划同样按日占位
+  checkLogsUnread()
+  if (!logsTimer) logsTimer = setInterval(checkLogsUnread, 60000)
 }
 watch(
   [() => route.params.id, () => plan.value?.start_date, () => plan.value?.end_date],
@@ -155,6 +197,8 @@ async function loadPlanLogs() {
 function openLogs() {
   planLogs.value = []
   showLogs.value = true
+  if (plan.value) localStorage.setItem(`tx:logs-seen:${plan.value.id}`, new Date().toISOString())
+  logsUnread.value = 0
   loadPlanLogs()
 }
 
@@ -220,6 +264,8 @@ function backHome() {
 // 切页时释放订阅
 onBeforeUnmount(() => {
   if (prevPlanId) contentStore.detachRemote(prevPlanId)
+  presenceCtl?.dispose()
+  if (logsTimer) clearInterval(logsTimer)
 })
 </script>
 
@@ -231,8 +277,9 @@ onBeforeUnmount(() => {
         <button class="icon-btn" aria-label="导出行程单" @click="showExport = true">
           <i class="fa-solid fa-file-export" aria-hidden="true"></i>
         </button>
-        <button class="icon-btn" aria-label="更多操作" @click="showMore = true">
+        <button class="icon-btn relative" aria-label="更多操作" @click="showMore = true">
           <i class="fa-solid fa-ellipsis" aria-hidden="true"></i>
+          <span v-if="logsUnread" class="absolute right-1 top-1 h-2 w-2 rounded-full bg-rose"></span>
         </button>
       </template>
     </MobileTopNav>
@@ -252,11 +299,11 @@ onBeforeUnmount(() => {
           <div class="relative flex flex-wrap items-start justify-between gap-6">
             <div class="min-w-0 flex-1">
               <div class="mb-3 flex flex-wrap items-center gap-2">
-                <span class="chip chip-plain" :style="{ background: 'rgba(255,255,255,0.55)' }">
+                <span class="chip chip-plain hero-surface">
                   <i class="fa-solid fa-location-dot text-[11px] text-primary" aria-hidden="true"></i>
                   {{ plan.destination || '目的地待定' }}
                 </span>
-                <span class="chip chip-plain" :style="{ background: 'rgba(255,255,255,0.55)' }">
+                <span class="chip chip-plain hero-surface">
                   <i class="fa-regular fa-calendar text-[11px]" aria-hidden="true"></i>
                   {{ fmtRange(plan.start_date, plan.end_date) }} · {{ planDays(plan.start_date, plan.end_date) }} 天
                 </span>
@@ -267,8 +314,15 @@ onBeforeUnmount(() => {
               <p class="visual-sub mb-3 text-[13px]">
                 <i class="fa-regular fa-clock mr-1" aria-hidden="true"></i>{{ statusText }}
               </p>
-              <div class="mb-3 flex items-center gap-3">
+              <div class="mb-3 flex flex-wrap items-center gap-3">
                 <AvatarStack :users="plan.members" :size="30" :max="5" />
+                <span
+                  v-if="onlineUsers.length"
+                  class="chip hero-surface"
+                  :title="onlineUsers.map((u) => u.name).join('、')"
+                >
+                  <span class="dot" style="background: #16a34a"></span>{{ onlineUsers.length }} 人在线
+                </span>
                 <BaseTag v-if="roleChip" :tone="roleChip.tone" dot class="!py-1">
                   {{ roleChip.text }}
                 </BaseTag>
@@ -277,7 +331,6 @@ onBeforeUnmount(() => {
               <button
                 v-if="!roleChip"
                 class="chip chip-brand cursor-pointer !px-4 !py-2 transition-all duration-200 ease-out active:scale-95"
-                style="background: rgba(255,255,255,0.75)"
                 @click="plansStore.joinAsParticipant(plan.id)"
               >
                 <i class="fa-solid fa-user-plus" aria-hidden="true"></i>
@@ -287,25 +340,26 @@ onBeforeUnmount(() => {
 
             <!-- 桌面操作 -->
             <div class="hidden items-center gap-2 md:flex">
-              <button v-if="isSupabase" class="btn btn-ghost btn-sm" style="background: rgba(255,255,255,0.6)" @click="openLogs">
+              <button v-if="isSupabase" class="btn btn-ghost btn-sm hero-surface" @click="openLogs">
                 <i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i>最近动态
+                <span v-if="logsUnread" class="chip chip-rose !px-1.5 !py-0 !text-[10px]">{{ logsUnread }}</span>
               </button>
-              <button class="btn btn-ghost btn-sm" style="background: rgba(255,255,255,0.6)" @click="showIssues = true">
+              <button class="btn btn-ghost btn-sm hero-surface" @click="showIssues = true">
                 <i class="fa-solid fa-stethoscope" aria-hidden="true"></i>体检
               </button>
-              <button class="btn btn-ghost btn-sm" style="background: rgba(255,255,255,0.6)" @click="showReport = true">
+              <button class="btn btn-ghost btn-sm hero-surface" @click="showReport = true">
                 <i class="fa-solid fa-chart-pie" aria-hidden="true"></i>复盘
               </button>
-              <button class="btn btn-ghost btn-sm" style="background: rgba(255,255,255,0.6)" @click="showExport = true">
+              <button class="btn btn-ghost btn-sm hero-surface" @click="showExport = true">
                 <i class="fa-solid fa-file-export" aria-hidden="true"></i>导出行程单
               </button>
-              <button class="btn btn-ghost btn-sm" style="background: rgba(255,255,255,0.6)" @click="showPpt = true">
+              <button class="btn btn-ghost btn-sm hero-surface" @click="showPpt = true">
                 <i class="fa-solid fa-file-powerpoint" aria-hidden="true"></i>生成 PPT
               </button>
-              <button v-if="isOwner" class="btn btn-ghost btn-sm" style="background: rgba(255,255,255,0.6)" @click="showPerm = true">
+              <button v-if="canManage" class="btn btn-ghost btn-sm hero-surface" @click="showPerm = true">
                 <i class="fa-solid fa-user-shield" aria-hidden="true"></i>成员与权限
               </button>
-              <button v-if="isOwner" class="btn btn-ghost btn-sm" style="background: rgba(255,255,255,0.6)" @click="openEdit">
+              <button v-if="isOwner" class="btn btn-ghost btn-sm hero-surface" @click="openEdit">
                 <i class="fa-solid fa-pen" aria-hidden="true"></i>编辑计划
               </button>
               <button v-if="isOwner" class="btn btn-danger-soft btn-sm" @click="showDelete = true">
@@ -316,21 +370,21 @@ onBeforeUnmount(() => {
 
           <!-- 概要统计小徽标 -->
           <div class="relative mt-6 flex flex-wrap gap-2">
-            <button class="chip" style="background: rgba(255,255,255,0.6)" @click="goSec('route')">
+            <button class="chip hero-surface" @click="goSec('route')">
               <i class="fa-solid fa-map-pin text-[11px] text-primary" aria-hidden="true"></i>{{ stats.dest || 0 }} 地点
             </button>
-            <button class="chip" style="background: rgba(255,255,255,0.6)" @click="goSec('stay')">
+            <button class="chip hero-surface" @click="goSec('stay')">
               <i class="fa-solid fa-bed text-[11px] text-primary" aria-hidden="true"></i>{{ stats.stays || 0 }} 家
             </button>
-            <button class="chip" style="background: rgba(255,255,255,0.6)" @click="goSec('todo')">
+            <button class="chip hero-surface" @click="goSec('todo')">
               <i class="fa-solid fa-circle-check text-[11px] text-primary" aria-hidden="true"></i>
               待办 {{ stats.todoPct || 0 }}%
             </button>
-            <button class="chip" style="background: rgba(255,255,255,0.6)" @click="goSec('reminder')">
+            <button class="chip hero-surface" @click="goSec('reminder')">
               <i class="fa-solid fa-bell text-[11px] text-amber" aria-hidden="true"></i>
               {{ stats.unread || 0 }} 条未读提醒
             </button>
-            <button class="chip" style="background: rgba(255,255,255,0.6)" @click="goSec('bill')">
+            <button class="chip hero-surface" @click="goSec('bill')">
               <i class="fa-solid fa-scale-balanced text-[11px] text-primary" aria-hidden="true"></i>
               {{ stats.bills || 0 }} 笔分账
             </button>
@@ -355,7 +409,8 @@ onBeforeUnmount(() => {
 
         <!-- 模块主体:切换带 fade-up 过渡 -->
         <Transition name="fade-up" mode="out-in">
-          <RouteSection :key="'route'" v-if="activeSec === 'route'" :plan="plan" :can-edit="canEdit" />
+          <TodaySection :key="'today'" v-if="activeSec === 'today'" :plan="plan" :can-edit="canEdit" />
+          <RouteSection :key="'route'" v-else-if="activeSec === 'route'" :plan="plan" :can-edit="canEdit" />
           <DriveSection :key="'drive'" v-else-if="activeSec === 'drive'" :plan="plan" :can-edit="canEdit" />
           <StaySection :key="'stay'" v-else-if="activeSec === 'stay'" :plan="plan" :can-edit="canEdit" />
           <TodoSection :key="'todo'" v-else-if="activeSec === 'todo'" :plan="plan" :can-edit="canEdit" />
@@ -386,7 +441,7 @@ onBeforeUnmount(() => {
     </Transition>
 
     <PlanFormModal v-model="showForm" :plan="plan" @save="onSave" />
-    <PlanPermModal v-if="isOwner" v-model="showPerm" :plan="plan" />
+    <PlanPermModal v-if="canManage" v-model="showPerm" :plan="plan" />
     <ExportSheet v-model="showExport" :plan="plan" />
     <PptSheet v-model="showPpt" :plan="plan" />
     <ReportSheet v-model="showReport" :plan="plan" />
@@ -428,7 +483,7 @@ onBeforeUnmount(() => {
           <i class="fa-solid fa-chart-pie text-[18px] text-primary" aria-hidden="true"></i>行程复盘
         </button>
         <button
-          v-if="isOwner"
+          v-if="canManage"
           class="flex flex-col items-center gap-2 rounded-[14px] bg-surface-2/70 py-4 text-[13px] font-semibold text-ink-soft transition active:scale-95"
           @click="showMore = false; showPerm = true"
         >

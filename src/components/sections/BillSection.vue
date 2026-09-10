@@ -8,6 +8,7 @@
 // ============================================================
 import { ref, computed, reactive } from 'vue'
 import { useContentStore } from '@/stores/content'
+import { usePlansStore } from '@/stores/plans'
 import BaseModal from '@/components/ui/BaseModal.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseTag from '@/components/ui/BaseTag.vue'
@@ -24,6 +25,14 @@ const props = defineProps({
   canEdit: { type: Boolean, default: true }
 })
 const store = useContentStore()
+const plansStore = usePlansStore()
+/** 是否已结算归档(锁定,不可再改账单) */
+const settled = computed(() => Boolean(props.plan.settled))
+
+async function toggleSettle() {
+  await plansStore.updatePlan(props.plan.id, { settled: !settled.value })
+  toast(settled.value ? '已解锁,可继续记账' : '已结算归档,账单已锁定')
+}
 
 const linkOpen = ref(false) // 「从行程记账」下拉
 const mode = ref('ledger') // ledger 记账 | budget 预算看板 | vehicle 车辆里程
@@ -100,6 +109,10 @@ function resetForm() {
 }
 
 function openAdd(preLink) {
+  if (settled.value) {
+    toast('已结算归档,如需修改请先解锁')
+    return
+  }
   editingId.value = null
   resetForm()
   if (preLink) {
@@ -112,6 +125,10 @@ function openAdd(preLink) {
 }
 
 function openEdit(b) {
+  if (settled.value) {
+    toast('已结算归档,如需修改请先解锁')
+    return
+  }
   editingId.value = b.id
   Object.assign(form, {
     name: b.name,
@@ -259,12 +276,13 @@ function linkChip(b) {
           分账
           <span v-if="bills.length" class="chip chip-brand">{{ bills.length }} 笔</span>
           <span v-if="totalAmount" class="chip chip-amber">{{ money(totalAmount) }}</span>
+          <span v-if="settled" class="chip chip-success"><i class="fa-solid fa-lock text-[10px]" aria-hidden="true"></i>已结算归档</span>
         </h2>
         <p class="muted mt-1">每笔记录涉及谁、谁垫付,按人自动算清账</p>
       </div>
-      <div v-if="mode === 'ledger'" class="flex items-center gap-2">
+      <div v-if="mode === 'ledger'" class="flex flex-wrap items-center gap-2">
         <!-- 快捷记账:从食宿/路线一键带过来 -->
-        <div v-if="canEdit" class="relative">
+        <div v-if="canEdit && !settled" class="relative">
           <BaseButton variant="ghost" icon="fa-link" @click="linkOpen = !linkOpen">从行程记账</BaseButton>
           <Transition name="scale-in">
             <div v-if="linkOpen" class="fixed inset-0 z-[94] bg-black/20 sm:hidden" @click="linkOpen = false"></div>
@@ -295,8 +313,22 @@ function linkChip(b) {
             </div>
           </Transition>
         </div>
-        <BaseButton v-if="canEdit && mode === 'ledger'" icon="fa-plus" @click="openAdd(null)">记一笔</BaseButton>
+        <BaseButton v-if="canEdit && !settled" icon="fa-plus" @click="openAdd(null)">记一笔</BaseButton>
+        <BaseButton
+          v-if="canEdit"
+          :variant="settled ? 'soft' : 'ghost'"
+          :icon="settled ? 'fa-lock-open' : 'fa-lock'"
+          @click="toggleSettle"
+        >
+          {{ settled ? '解锁' : '结算归档' }}
+        </BaseButton>
       </div>
+    </div>
+
+    <!-- 已结算提示 -->
+    <div v-if="settled && mode === 'ledger'" class="mb-5 flex items-center gap-2 rounded-[12px] bg-[#16a34a]/10 px-4 py-3 text-[12.5px] font-medium text-[#16a34a]">
+      <i class="fa-solid fa-circle-check" aria-hidden="true"></i>
+      本行程分账已结算归档,账单已锁定;如需继续记账请点右上角「解锁」。
     </div>
 
     <!-- 子视图切换:记账 / 预算看板 / 车辆里程 -->
@@ -412,7 +444,7 @@ function linkChip(b) {
               <span v-if="!b.involves?.length">{{ b.split === 'none' ? '不分摊' : '无人分摊' }}</span>
             </p>
           </div>
-          <div v-if="canEdit" class="flex shrink-0 gap-1">
+          <div v-if="canEdit && !settled" class="flex shrink-0 gap-1">
             <button class="icon-btn" title="编辑这笔账" @click="openEdit(b)">
               <i class="fa-solid fa-pen" aria-hidden="true"></i>
             </button>
@@ -430,7 +462,7 @@ function linkChip(b) {
       title="还没有记账"
       desc="酒店、油费、门票都可以记进来,支持关联到食宿和行程地点"
     >
-      <BaseButton v-if="canEdit" icon="fa-plus" @click="openAdd(null)">记第一笔</BaseButton>
+      <BaseButton v-if="canEdit && !settled" icon="fa-plus" @click="openAdd(null)">记第一笔</BaseButton>
     </EmptyState>
 
       </div>

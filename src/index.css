@@ -307,8 +307,13 @@ select.field { appearance: none; }
 .visual-title { color: rgb(var(--c-ink)); }
 .visual-sub { color: rgb(var(--c-ink-soft)); }
 @media (prefers-color-scheme: dark) {
-  .visual-title { color: #f2f6ff; }
-  .visual-sub { color: rgb(214 224 250 / 0.85); }
+  .visual-title { color: #f7fbff; }
+  .visual-sub { color: rgb(226 234 250 / 0.92); }
+}
+/* Hero 上的浅色控件:亮色半透明白,暗色改半透明深色,避免浅字看不清 */
+.hero-surface { background: rgb(255 255 255 / 0.6); }
+@media (prefers-color-scheme: dark) {
+  .hero-surface { background: rgb(16 9 12 / 0.5); }
 }
 
 /* ---- 毛玻璃顶栏滚动态 ---- */
@@ -429,7 +434,7 @@ select.field { appearance: none; }
    5) 打印样式(导出行程单 → 另存为 PDF)
    ============================================================ */
 @media print {
-  @page { size: A4; margin: 12mm; }
+  @page { size: A4; margin: 15mm; }
   body { background: #fff !important; }
   /* 只保留导出弹窗:其余顶层节点直接 display:none,避免隐藏元素占位产生空白页 */
   body > * { display: none !important; }

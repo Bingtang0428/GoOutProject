@@ -57,7 +57,35 @@ const issues = computed(() => {
       push('plain', 'fa-circle-info', `${tr.person?.name} 的大交通日期(${tr.leg_date})偏离行程较远,确认是否早到/晚走`)
     }
   }
-  // 5) 未来日期还没排内容
+  // 5) 大交通与当天行程时间冲突
+  const toMin = (t) => {
+    if (!t) return null
+    const [h, m] = String(t).split(':').map(Number)
+    return Number.isFinite(h) ? h * 60 + (m || 0) : null
+  }
+  const fmtMin = (n) => `${String(Math.floor(n / 60)).padStart(2, '0')}:${String(n % 60).padStart(2, '0')}`
+  const dayByDate = new Map(rows.days.map((d) => [d.date, d]))
+  for (const tr of rows.transits) {
+    const day = dayByDate.get(tr.leg_date)
+    if (!day) continue
+    const dests = (day.destinations || []).filter((x) => !x.stay_role || x.stay_role === 'end')
+    const times = dests.map((x) => toMin(x.time)).filter((n) => n != null)
+    if (!times.length) continue
+    const t = toMin(tr.time)
+    if (t == null) continue
+    if (tr.direction === 'in') {
+      const first = Math.min(...times)
+      if (t > first) {
+        push('amber', 'fa-plane-arrival', `${tr.person?.name} ${tr.time} 才到达,但当天首个行程已排在 ${fmtMin(first)},可能赶不上`)
+      }
+    } else if (tr.direction === 'out') {
+      const last = Math.max(...times)
+      if (t < last) {
+        push('amber', 'fa-plane-departure', `${tr.person?.name} ${tr.time} 就要离开,但当天最后一项行程在 ${fmtMin(last)},可能来不及`)
+      }
+    }
+  }
+  // 6) 未来日期还没排内容
   const sorted = rows.days.slice().sort((a, b) => a.date.localeCompare(b.date))
   for (const d of sorted) {
     if (d.date >= today && d.date <= e && !(d.destinations || []).length) {

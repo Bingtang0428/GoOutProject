@@ -6,6 +6,7 @@ defineProps({
 const emit = defineEmits(['change'])
 
 const TABS = [
+  { key: 'today', icon: 'fa-sun', label: '今日' },
   { key: 'route', icon: 'fa-route', label: '路线' },
   { key: 'drive', icon: 'fa-car-side', label: '自驾' },
   { key: 'stay', icon: 'fa-bed', label: '食宿' },

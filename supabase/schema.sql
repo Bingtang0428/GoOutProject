@@ -25,6 +25,7 @@ alter table public.plans add column if not exists owner_id text;
 alter table public.plans add column if not exists viewers jsonb not null default '[]'::jsonb;
 alter table public.plans add column if not exists budget numeric(12,2);
 alter table public.plans add column if not exists start_city text not null default '';
+alter table public.plans add column if not exists settled boolean not null default false; -- 分账是否已结算归档(锁定)
 
 -- 每日路线(每日一行,destinations 为当天地点数组)
 create table if not exists public.route_days (
@@ -49,6 +50,11 @@ create table if not exists public.memories (
   author     jsonb,
   created_at timestamptz not null default now()
 );
+-- 相册与行程进度/位置结合
+alter table public.memories add column if not exists dest_id text not null default '';
+alter table public.memories add column if not exists place text not null default '';
+alter table public.memories add column if not exists lat double precision;
+alter table public.memories add column if not exists lng double precision;
 
 -- 食宿安排(type: stay=住宿 / food=餐饮;assignee=负责人)
 create table if not exists public.stays (

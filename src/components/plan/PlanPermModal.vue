@@ -5,7 +5,10 @@
 // ============================================================
 import { ref, computed } from 'vue'
 import { usePlansStore } from '@/stores/plans'
-import { AVATAR_GRADS } from '@/utils/misc'
+import { useAuthStore } from '@/stores/auth'
+import { supabase, isSupabase } from '@/api/supabase'
+import { AVATAR_GRADS, makeUuid } from '@/utils/misc'
+import { toast } from '@/composables/toast'
 import BaseModal from '@/components/ui/BaseModal.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import Avatar from '@/components/ui/Avatar.vue'
@@ -16,6 +19,40 @@ const props = defineProps({
 })
 const emit = defineEmits(['update:modelValue'])
 const plansStore = usePlansStore()
+const auth = useAuthStore()
+
+/* 领队自助生成邀请码(绑定本计划) */
+const inviteCode = ref('')
+const inviteRole = ref('member')
+const genBusy = ref(false)
+async function genInvite() {
+  if (!isSupabase) {
+    toast('演示模式暂不支持邀请码,配置 Supabase 后可用', 'info')
+    return
+  }
+  genBusy.value = true
+  try {
+    const code = `TT-${Math.random().toString(36).slice(2, 8).toUpperCase()}-${Math.random().toString(36).slice(2, 5).toUpperCase()}`
+    const { error } = await supabase.from('invite_codes').insert({
+      id: makeUuid(),
+      code,
+      role: inviteRole.value,
+      plan_id: props.plan.id,
+      label: `计划「${props.plan.name}」邀请`,
+      max_uses: 20,
+      use_count: 0,
+      created_by: auth.user ? { id: auth.user.id, name: auth.user.name } : null
+    })
+    if (error) throw error
+    inviteCode.value = code
+    navigator.clipboard?.writeText(code).catch(() => {})
+    toast('邀请码已生成并复制')
+  } catch (e) {
+    toast('生成失败:' + (e?.message || '请重试'), 'error')
+  } finally {
+    genBusy.value = false
+  }
+}
 
 const addName = ref('')
 const addAs = ref('participant') // participant | viewer
@@ -75,6 +112,24 @@ async function removePerson(p) {
       <p class="muted -mt-1 text-[12.5px] leading-relaxed">
         创建者可编辑计划与成员;<b>参与者</b>可编辑路线 / 食宿 / 待办 / 攻略 / 分账;<b>围观者</b>只读查看。
       </p>
+
+      <!-- 领队自助邀请:生成绑定本计划的邀请码 -->
+      <div class="card !rounded-box bg-surface-2/60 p-3">
+        <p class="mb-2 flex items-center gap-2 text-[13px] font-semibold text-ink-soft">
+          <i class="fa-solid fa-key text-primary" aria-hidden="true"></i>邀请队友(生成邀请码)
+        </p>
+        <div class="flex flex-wrap items-center gap-2">
+          <div class="flex gap-1">
+            <button class="chip !px-3 !py-2" :class="inviteRole === 'member' ? 'chip-brand' : 'chip-plain'" @click="inviteRole = 'member'">参与者</button>
+            <button class="chip !px-3 !py-2" :class="inviteRole === 'viewer' ? 'chip-brand' : 'chip-plain'" @click="inviteRole = 'viewer'">围观者</button>
+          </div>
+          <BaseButton size="sm" icon="fa-key" :loading="genBusy" @click="genInvite">生成并复制</BaseButton>
+        </div>
+        <p v-if="inviteCode" class="mt-2 font-mono text-[14px] font-bold tracking-wider text-primary">{{ inviteCode }}</p>
+        <p class="muted mt-1.5 text-[11px]">
+          <i class="fa-solid fa-circle-info mr-1" aria-hidden="true"></i>队友在登录页用此码注册后会自动加入本计划(最多 20 人)
+        </p>
+      </div>
 
       <!-- 添加 -->
       <div class="card flex items-end gap-2 !rounded-box bg-surface-2/60 p-3">

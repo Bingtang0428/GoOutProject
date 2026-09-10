@@ -781,6 +781,35 @@ function toggleComments(date, destId) {
   draft[key] = ''
 }
 
+/* @成员:插入与高亮 */
+const mentionFor = ref(null) // 'date|destId'
+function toggleMention(date, destId) {
+  const key = `${date}|${destId}`
+  mentionFor.value = mentionFor.value === key ? null : key
+}
+function insertMention(date, destId, name) {
+  const key = `${date}|${destId}`
+  draft[key] = `${draft[key] || ''}@${name} `
+  mentionFor.value = null
+}
+const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+/** 把评论文本按 @成员 切成片段,便于高亮 */
+function segments(text) {
+  const names = participants.value.map((p) => p.name).filter(Boolean)
+  if (!names.length) return [{ t: text }]
+  const re = new RegExp(`(@(?:${names.map(escapeRe).join('|')}))`, 'g')
+  const out = []
+  let last = 0
+  let m
+  while ((m = re.exec(text))) {
+    if (m.index > last) out.push({ t: text.slice(last, m.index) })
+    out.push({ t: m[1], mention: true })
+    last = m.index + m[1].length
+  }
+  if (last < text.length) out.push({ t: text.slice(last) })
+  return out.length ? out : [{ t: text }]
+}
+
 async function postComment(date, destId) {
   const key = `${date}|${destId}`
   const text = (draft[key] || '').trim()
@@ -1326,7 +1355,12 @@ watch(
                               </template>
                             </BaseTag>
                           </div>
-                          <p class="text-[13.5px] leading-relaxed text-ink-soft">{{ c.text }}</p>
+                          <p class="text-[13.5px] leading-relaxed text-ink-soft">
+                            <template v-for="(seg, si) in segments(c.text)" :key="si">
+                              <span v-if="seg.mention" class="font-semibold text-primary">{{ seg.t }}</span>
+                              <template v-else>{{ seg.t }}</template>
+                            </template>
+                          </p>
                           <div class="mt-2 flex flex-wrap items-center gap-2 text-[11.5px]">
                             <template v-if="c.status === 'done'">
                               <span class="muted">{{ c.accepted_at ? `采纳于 ${ago(c.accepted_at)}` : '' }}{{ c.done_at ? ` · 落实于 ${ago(c.done_at)}` : '' }}</span>
@@ -1369,17 +1403,31 @@ watch(
                     </div>
                     <p v-else-if="!canEdit" class="muted text-[12.5px] italic">还没有人提建议</p>
                     <!-- 发表建议(围观者隐藏) -->
-                    <div v-if="canEdit" class="mt-3 flex gap-2">
+                    <div v-if="canEdit" class="relative mt-3 flex gap-2">
                       <input
                         v-model="draft[`${day.date}|${d.id}`]"
                         class="field flex-1 !py-2 text-[13px]"
-                        placeholder="给这个地点提个建议 / 发表意见…"
+                        placeholder="给这个地点提个建议,可 @ 队友…"
                         maxlength="120"
                         @keyup.enter="postComment(day.date, d.id)"
                       />
+                      <BaseButton variant="ghost" size="sm" icon="fa-at" title="提醒某位队友" @click="toggleMention(day.date, d.id)" />
                       <BaseButton size="sm" :disabled="!(draft[`${day.date}|${d.id}`] || '').trim()" @click="postComment(day.date, d.id)">
                         提交
                       </BaseButton>
+                      <Transition name="scale-in">
+                        <div v-if="mentionFor === `${day.date}|${d.id}`" class="card absolute bottom-12 right-0 z-30 w-52 p-2 shadow-pop">
+                          <p class="muted px-2 py-1 text-[11px]">@ 提醒谁</p>
+                          <button
+                            v-for="p in participants"
+                            :key="p.id"
+                            class="flex w-full items-center gap-2 rounded-[10px] px-2 py-1.5 text-left text-[13px] hover:bg-surface-2"
+                            @click="insertMention(day.date, d.id, p.name)"
+                          >
+                            <Avatar :name="p.name" :size="20" :ring="false" :color="p.color" :seed="p.id" />{{ p.name }}
+                          </button>
+                        </div>
+                      </Transition>
                     </div>
                   </div>
                 </Transition>

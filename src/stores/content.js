@@ -165,6 +165,18 @@ export const useContentStore = defineStore('content', () => {
     const { data, error } = await query.select()
 
     if (error) {
+      // 兼容未升级的数据库:遇到「列不存在」时去掉该字段重试(如 reads/targets)
+      const m = /column\s+"?([a-zA-Z0-9_]+)"?\s+.*does not exist/i.exec(error.message || '')
+      if (m) {
+        const clean = { ...patch }
+        delete clean[m[1]]
+        const { data: d3, error: e3 } = await supabase.from(table).update(clean).eq('id', id).select()
+        if (!e3 && d3?.[0]) {
+          applyById(planId, key, d3[0])
+          toast('已保存(部分字段需升级数据库后生效)', 'info', 3000)
+          return
+        }
+      }
       Object.assign(row, before)
       console.warn(`[content] 更新 ${table} 失败:`, error.message)
       toast('保存失败,请稍后重试', 'error')

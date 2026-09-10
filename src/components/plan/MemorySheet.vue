@@ -28,17 +28,37 @@ const items = computed(() =>
     .sort((a, b) => (b.day_date || '').localeCompare(a.day_date || ''))
 )
 
+/* 与行程进度结合:按日期定位到「第几天」与当天打卡地点 */
+const days = computed(() =>
+  store.rowsOf(props.plan.id, 'days').slice().sort((a, b) => a.date.localeCompare(b.date))
+)
+const dayDests = computed(() => days.value.find((d) => d.date === form.date)?.destinations || [])
+function dayNum(date) {
+  const i = days.value.findIndex((d) => d.date === date)
+  return i >= 0 ? i + 1 : null
+}
+function pickDest(e) {
+  const x = dayDests.value.find((d) => d.id === e.target.value)
+  form.destId = x?.id || ''
+  form.place = x?.place || ''
+  form.lat = x?.lat ?? null
+  form.lng = x?.lng ?? null
+}
+function onDateChange() {
+  form.destId = ''
+  form.place = ''
+  form.lat = null
+  form.lng = null
+}
+
 const adding = ref(false)
 const busy = ref(false)
-const form = reactive({ date: todayISO(), file: null, preview: '', note: '' })
+const form = reactive({ date: todayISO(), destId: '', place: '', lat: null, lng: null, file: null, preview: '', note: '' })
 const hint = ref('')
 
 function openAdd() {
   adding.value = true
-  form.date = todayISO()
-  form.file = null
-  form.preview = ''
-  form.note = ''
+  Object.assign(form, { date: todayISO(), destId: '', place: '', lat: null, lng: null, file: null, preview: '', note: '' })
   hint.value = ''
 }
 
@@ -61,6 +81,10 @@ async function save() {
     else if (!image) image = ''
     await store.addMemory(props.plan.id, {
       day_date: form.date,
+      dest_id: form.destId || '',
+      place: form.place || '',
+      lat: form.lat,
+      lng: form.lng,
       image,
       note: form.note.trim(),
       author: auth.user ? { id: auth.user.id, name: auth.user.name } : null
@@ -91,7 +115,7 @@ async function save() {
       <div class="grid grid-cols-1 gap-3 sm:grid-cols-[160px_1fr]">
         <div class="space-y-2">
           <label class="flabel !mb-0">日期</label>
-          <input v-model="form.date" type="date" class="field !py-2 text-[13px]" />
+          <input v-model="form.date" type="date" class="field !py-2 text-[13px]" @change="onDateChange" />
           <label class="block cursor-pointer overflow-hidden rounded-[10px] border border-dashed border-line bg-surface text-center text-[12px] text-muted">
             <img v-if="form.preview" :src="form.preview" alt="" class="max-h-28 w-full object-cover" />
             <span v-else class="flex h-20 items-center justify-center gap-1"><i class="fa-solid fa-image" aria-hidden="true"></i>选择照片</span>
@@ -99,8 +123,15 @@ async function save() {
           </label>
         </div>
         <div>
-          <label class="flabel !mb-0">此刻的一句话</label>
-          <textarea v-model="form.note" class="field mt-1" rows="3" placeholder="例如:宏村南湖的晨雾真好看"></textarea>
+          <div v-if="dayDests.length">
+            <label class="flabel !mb-0">打卡地点(可选,和行程对应)</label>
+            <select class="field mt-1 !py-2 text-[13px]" :value="form.destId" @change="pickDest">
+              <option value="">不指定</option>
+              <option v-for="x in dayDests" :key="x.id" :value="x.id">{{ x.time ? x.time + ' ' : '' }}{{ x.place }}</option>
+            </select>
+          </div>
+          <label class="flabel mt-2 !mb-0">此刻的一句话</label>
+          <textarea v-model="form.note" class="field mt-1" rows="2" placeholder="例如:宏村南湖的晨雾真好看"></textarea>
           <p v-if="hint" class="mt-1 text-[12px] text-rose">{{ hint }}</p>
           <div class="mt-2 flex justify-end gap-2">
             <BaseButton variant="ghost" size="sm" @click="adding = false">取消</BaseButton>
@@ -115,7 +146,12 @@ async function save() {
       <figure v-for="m in items" :key="m.id" class="card overflow-hidden p-0">
         <img :src="storageUrl(m.image)" :alt="m.note" loading="lazy" class="w-full" />
         <figcaption class="p-3">
-          <p class="muted mb-1 text-[11px]">{{ fmtDay(m.day_date, true) }}{{ m.author?.name ? ' · ' + m.author.name : '' }}</p>
+          <p class="muted mb-1 text-[11px]">
+            {{ fmtDay(m.day_date, true) }}
+            <template v-if="dayNum(m.day_date)"> · 第{{ dayNum(m.day_date) }}天</template>
+            <template v-if="m.place"> · <i class="fa-solid fa-location-dot" aria-hidden="true"></i>{{ m.place }}</template>
+            <template v-if="m.author?.name"> · {{ m.author.name }}</template>
+          </p>
           <p v-if="m.note" class="text-[13px] leading-relaxed text-ink-soft">{{ m.note }}</p>
           <div class="mt-2 flex justify-end">
             <button v-if="canEdit" class="icon-btn icon-btn-danger !h-7 !w-7" title="删除这张照片" @click="store.removeMemory(plan.id, m.id)">
