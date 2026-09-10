@@ -7,6 +7,7 @@ import { ref, computed } from 'vue'
 import { useContentStore } from '@/stores/content'
 import { useAuthStore } from '@/stores/auth'
 import { relKey, fmtDay, eachDayISO } from '@/utils/date'
+import { memberOf } from '@/utils/misc'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseModal from '@/components/ui/BaseModal.vue'
 import BaseCheckbox from '@/components/ui/BaseCheckbox.vue'
@@ -224,7 +225,7 @@ function countOf(key) {
               :title="canEdit ? '点击指派负责人' : '负责人'"
               @click="canEdit ? (assignFor = t.id) : null"
             >
-              <Avatar v-if="t.assignee" :name="t.assignee.name" :size="18" :ring="false" />
+                      <Avatar v-if="t.assignee" :name="t.assignee.name" :size="18" :ring="false" :color="memberOf(plan, t.assignee)?.color" :seed="t.assignee.id || t.assignee.name" />
               <i v-else class="fa-solid fa-user-plus text-[11px]" aria-hidden="true"></i>
               {{ t.assignee?.name || (canEdit ? '指派' : '未指派') }}
             </button>

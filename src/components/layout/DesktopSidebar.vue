@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { usePlansStore } from '@/stores/plans'
 import { useAuthStore } from '@/stores/auth'
 import { fmtRange, todayISO } from '@/utils/date'
+import { memberOf } from '@/utils/misc'
 import AvatarStack from '@/components/ui/AvatarStack.vue'
 import Avatar from '@/components/ui/Avatar.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
@@ -168,7 +169,7 @@ function logout() {
     <!-- 用户 -->
     <div class="flex items-center justify-between gap-3 border-t border-line/70 px-6 py-4">
       <div class="flex min-w-0 items-center gap-3">
-        <Avatar :name="auth.user?.name" :size="34" />
+        <Avatar :name="auth.user?.name" :size="34" :color="memberOf(plansStore.currentPlan, auth.user)?.color" :seed="auth.user?.id || auth.user?.name" />
         <div class="min-w-0">
           <p class="truncate text-[13px] font-semibold text-ink">{{ auth.user?.name }}</p>
           <p class="text-[11px] text-muted">正在计划下一程</p>

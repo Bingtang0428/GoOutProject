@@ -9,6 +9,7 @@ import { ref, reactive, computed, watch } from 'vue'
 import { useContentStore } from '@/stores/content'
 import { fmtDay, todayISO } from '@/utils/date'
 import { money } from '@/utils/money'
+import { memberOf } from '@/utils/misc'
 import BaseModal from '@/components/ui/BaseModal.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import Avatar from '@/components/ui/Avatar.vue'
@@ -413,7 +414,7 @@ async function saveFuel() {
         </span>
         <span v-if="l.bill_id" class="chip chip-success !text-[11px]"><i class="fa-solid fa-scale-balanced" aria-hidden="true"></i>已记入分账</span>
         <span v-if="l.paid_by" class="ml-auto flex items-center gap-1.5 text-[12px] text-muted">
-          <Avatar :name="l.paid_by.name" :size="18" :ring="false" />{{ l.paid_by.name }} 垫付
+              <Avatar :name="l.paid_by.name" :size="18" :ring="false" :color="memberOf(plan, l.paid_by)?.color" :seed="l.paid_by.id || l.paid_by.name" />{{ l.paid_by.name }} 垫付
         </span>
         <button
           v-if="canEdit"

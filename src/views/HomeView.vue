@@ -13,6 +13,7 @@ import { usePlansStore } from '@/stores/plans'
 import { useContentStore } from '@/stores/content'
 import { useAuthStore } from '@/stores/auth'
 import { fmtRange, todayISO, relKey, fmtDay } from '@/utils/date'
+import { memberOf } from '@/utils/misc'
 import DesktopSidebar from '@/components/layout/DesktopSidebar.vue'
 import MobileTopNav from '@/components/layout/MobileTopNav.vue'
 import PlanCard from '@/components/home/PlanCard.vue'
@@ -255,7 +256,7 @@ async function purgeOne(entry) {
         <!-- 问候区 -->
         <section class="mb-6 flex flex-wrap items-center justify-between gap-4">
           <div class="flex items-center gap-3">
-            <Avatar :name="auth.user?.name" :size="42" />
+            <Avatar :name="auth.user?.name" :size="42" :color="memberOf(plansStore.currentPlan, auth.user)?.color" :seed="auth.user?.id || auth.user?.name" />
             <div>
               <h1 class="text-[19px] font-bold text-ink">{{ greeting }},{{ auth.user?.name }}</h1>
               <p class="muted text-[12.5px]">

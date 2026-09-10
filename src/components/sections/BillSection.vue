@@ -220,7 +220,7 @@ function sharesFor(b) {
 
 const settlement = computed(() => {
   const stat = new Map()
-  for (const p of people.value) stat.set(p.id, { id: p.id, name: p.name, credit: 0, share: 0, count: 0 })
+  for (const p of people.value) stat.set(p.id, { id: p.id, name: p.name, color: p.color, credit: 0, share: 0, count: 0 })
   for (const b of bills.value) {
     if (b.split === 'none') continue // 不分摊(个人支出)不计入结算
     const shareMap = sharesFor(b)
@@ -385,7 +385,7 @@ function linkChip(b) {
     <div v-if="settlement.length" class="mb-8 grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-4">
       <div v-for="s in settlement" :key="s.id" class="card card-lift p-5">
         <div class="mb-3 flex items-center gap-2.5">
-          <Avatar :name="s.name" :size="30" :seed="s.id" />
+          <Avatar :name="s.name" :size="30" :seed="s.id" :color="s.color" />
           <div class="min-w-0">
             <p class="truncate text-[13.5px] font-semibold text-ink">{{ s.name }}</p>
             <p class="text-[11px] text-muted">参与 {{ s.count }} 笔分摊</p>
@@ -418,10 +418,10 @@ function linkChip(b) {
               class="chip !px-3 !py-2 text-[13px]"
               :class="isTransferConfirmed(t) ? 'chip-success' : 'chip-plain'"
             >
-              <Avatar :name="t.from" :size="18" :ring="false" />
+              <Avatar :name="t.from" :size="18" :ring="false" :color="memberOf(plan, { name: t.from })?.color" :seed="memberOf(plan, { name: t.from })?.id || t.from" />
               {{ t.from }}
               <i class="fa-solid fa-arrow-right text-[11px] text-primary" aria-hidden="true"></i>
-              <Avatar :name="t.to" :size="18" :ring="false" />
+              <Avatar :name="t.to" :size="18" :ring="false" :color="memberOf(plan, { name: t.to })?.color" :seed="memberOf(plan, { name: t.to })?.id || t.to" />
               {{ t.to }}
               <b class="text-primary">{{ money(t.amount) }}</b>
               <button

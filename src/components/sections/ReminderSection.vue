@@ -8,6 +8,7 @@ import { ref, reactive, computed } from 'vue'
 import { useContentStore } from '@/stores/content'
 import { useAuthStore } from '@/stores/auth'
 import { groupReminders, fmtDay, todayISO } from '@/utils/date'
+import { memberOf } from '@/utils/misc'
 import BaseModal from '@/components/ui/BaseModal.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
@@ -204,7 +205,7 @@ function groupTone(key) {
                         :class="readsOf(r).some((x) => samePerson(t, x)) ? 'bg-[#16a34a]/10' : 'bg-surface-2'"
                         :title="readsOf(r).some((x) => samePerson(t, x)) ? `${t.name} 已读` : `${t.name} 未读`"
                       >
-                        <Avatar :name="t.name" :size="16" :ring="false" :seed="t.id" />
+                        <Avatar :name="t.name" :size="16" :ring="false" :seed="t.id" :color="memberOf(plan, t)?.color" />
                         <span class="max-w-[48px] truncate" :class="readsOf(r).some((x) => samePerson(t, x)) ? 'text-[#16a34a]' : 'text-muted'">{{ t.name }}</span>
                         <i
                           class="text-[9px]"

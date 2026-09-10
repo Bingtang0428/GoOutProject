@@ -346,7 +346,7 @@ function tagTone(tag) {
           </div>
           <div v-if="s.assignee" class="mb-1.5 flex items-center gap-2 text-[12.5px] text-ink-soft">
             <i class="fa-solid fa-user-check text-[11px] text-primary/70" aria-hidden="true"></i>
-            负责:<Avatar :name="s.assignee.name" :size="18" :ring="false" class="ml-1" />{{ s.assignee.name }}
+            负责:<Avatar :name="s.assignee.name" :size="18" :ring="false" class="ml-1" :color="memberOf(plan, s.assignee)?.color" :seed="s.assignee.id || s.assignee.name" />{{ s.assignee.name }}
           </div>
 
           <div v-if="s.tags?.length" class="mb-4 flex flex-wrap gap-2">

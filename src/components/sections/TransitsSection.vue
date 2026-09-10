@@ -9,6 +9,7 @@ import { ref, reactive, computed, watch } from 'vue'
 import { useContentStore } from '@/stores/content'
 import { usePresenceStore } from '@/stores/presence'
 import { fmtDay } from '@/utils/date'
+import { memberOf } from '@/utils/misc'
 import BaseModal from '@/components/ui/BaseModal.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseTag from '@/components/ui/BaseTag.vue'
@@ -261,7 +262,7 @@ const DIR_META = {
         <ol v-else class="space-y-2">
           <li v-for="(t, i) in arrivals" :key="t.id" class="flex items-center gap-3 rounded-[12px] bg-surface-2/60 px-3.5 py-2.5">
             <span class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-[11px] font-bold text-white">{{ i + 1 }}</span>
-            <Avatar :name="t.person?.name" :size="26" />
+            <Avatar :name="t.person?.name" :size="26" :color="memberOf(plan, t.person)?.color" :seed="t.person?.id || t.person?.name" />
             <div class="min-w-0 flex-1">
               <p class="truncate text-[13px] text-ink">
                 <b class="font-semibold">{{ t.person?.name }}</b>
@@ -289,7 +290,7 @@ const DIR_META = {
         <ol v-else class="space-y-2">
           <li v-for="(t, i) in departures" :key="t.id" class="flex items-center gap-3 rounded-[12px] bg-surface-2/60 px-3.5 py-2.5">
             <span class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-amber text-[11px] font-bold text-white">{{ i + 1 }}</span>
-            <Avatar :name="t.person?.name" :size="26" />
+            <Avatar :name="t.person?.name" :size="26" :color="memberOf(plan, t.person)?.color" :seed="t.person?.id || t.person?.name" />
             <div class="min-w-0 flex-1">
               <p class="truncate text-[13px] text-ink">
                 <b class="font-semibold">{{ t.person?.name }}</b>

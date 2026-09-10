@@ -1346,7 +1346,7 @@ watch(
                           :title="driversOf(d).some((x) => x.id === p.id) ? `取消 ${p.name} 负责此段` : `${p.name} 负责此段`"
                           @click="toggleDriver(day, d, p)"
                         >
-                          <Avatar :name="p.name" :size="16" :ring="false" :seed="p.id" />
+                          <Avatar :name="p.name" :size="16" :ring="false" :seed="p.id" :color="p.color" />
                           {{ p.name }}
                         </button>
                         <span v-if="driversOf(d).length" class="chip chip-success !py-0.5 !text-[11px]">
