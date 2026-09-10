@@ -190,6 +190,11 @@ function slideGrad(i) {
 function dayLabel(d, i) {
   return `第 ${i + 1} 天 · ${fmtDay(d.date, true)}`
 }
+/** 当天缺少坐标、未画到地图上的地点数 */
+function mapMissing(day) {
+  const dests = day.destinations || []
+  return dests.filter((x) => !(Number.isFinite(x.lat) && Number.isFinite(x.lng))).length
+}
 
 /* ---------- 导出 ---------- */
 async function renderAll() {
@@ -277,7 +282,7 @@ async function printPdf() {
             <header class="flex items-center justify-between gap-3 px-6 py-4">
               <div>
                 <h3 class="title-1 text-[18px]">生成旅行 PPT</h3>
-                <p class="muted mt-0.5 text-[12px]">旅游全景 · 每日行程(含地图) · 吃什么 · 住哪里 · 预算 · 待办</p>
+                <p class="muted mt-0.5 text-[12px]">旅游全景 · 每日行程(含地图) · 待定餐厅 · 住哪里 · 预算 · 待办</p>
               </div>
               <button class="btn btn-ghost btn-sm" @click="emit('update:modelValue', false)">
                 <i class="fa-solid fa-xmark" aria-hidden="true"></i>关闭
@@ -326,7 +331,7 @@ async function printPdf() {
                       </div>
                     </div>
                     <p class="mt-6 text-[13px] text-[#6d4a58]">
-                      住宿 {{ hotels.length }} 处 · 餐厅 {{ foods.length }} 家 · 待办 {{ todos.filter((t) => !t.done).length }} 项 · 花费 {{ fmtMoney(totalSpent) }}
+                      住宿 {{ hotels.length }} 处 · 待定餐厅 {{ foods.length }} 家 · 待办 {{ todos.filter((t) => !t.done).length }} 项 · 花费 {{ fmtMoney(totalSpent) }}
                     </p>
                   </div>
 
@@ -344,9 +349,12 @@ async function printPdf() {
                       v-if="s.page === 0"
                       :src="getMap(s.day)"
                       alt="当日路线"
-                      class="mt-2 w-full rounded-[12px]"
-                      style="height: 150px; object-fit: cover"
+                      class="mt-2 w-full rounded-[12px] bg-[#f7f2f4]"
+                      style="height: 172px; object-fit: contain"
                     />
+                    <p v-if="s.page === 0 && mapMissing(s.day)" class="mt-1 text-[10.5px] text-[#9a7a86]">
+                      <i class="fa-solid fa-circle-info mr-1" aria-hidden="true"></i>{{ mapMissing(s.day) }} 个地点缺少坐标,未显示在地图上
+                    </p>
 
                     <ol class="mt-3 flex-1 space-y-1.5 overflow-hidden">
                       <li v-for="(x, xi) in s.items" :key="x.id" class="flex items-start gap-2 text-[13px] text-[#4a3440]">
@@ -368,17 +376,28 @@ async function printPdf() {
                     </div>
                   </div>
 
-                  <!-- 吃什么(可多页) -->
+                  <!-- 待定餐厅(可多页) -->
                   <div v-else-if="s.kind === 'food'" class="flex h-full flex-col p-8">
-                    <h2 class="text-[22px] font-bold text-[#b75973]">
-                      吃什么
-                      <span v-if="s.pages > 1" class="text-[12px] font-normal text-[#9a7a86]">({{ s.page + 1 }}/{{ s.pages }})</span>
-                    </h2>
+                    <div class="flex flex-wrap items-baseline justify-between gap-2">
+                      <h2 class="text-[22px] font-bold text-[#b75973]">
+                        待定餐厅
+                        <span v-if="s.pages > 1" class="text-[12px] font-normal text-[#9a7a86]">({{ s.page + 1 }}/{{ s.pages }})</span>
+                      </h2>
+                      <span class="text-[12px] text-[#9a7a86]">候选餐厅,待选定</span>
+                    </div>
                     <div class="mt-5 grid flex-1 grid-cols-2 gap-3">
                       <div v-for="f in s.items" :key="f.id" class="rounded-[12px] bg-[#fff8ec] p-4">
-                        <p class="text-[15px] font-semibold text-[#3d2931]">{{ f.name }}</p>
+                        <div class="flex items-center justify-between gap-2">
+                          <p class="min-w-0 truncate text-[15px] font-semibold text-[#3d2931]">{{ f.name }}</p>
+                          <span
+                            class="shrink-0 rounded-full px-2 py-0.5 text-[10.5px] font-semibold"
+                            :style="f.chosen ? 'background:rgba(22,163,74,.1);color:#16a34a' : 'background:rgba(180,83,9,.1);color:#b45309'"
+                          >{{ f.chosen ? '已选定' : '待定' }}</span>
+                        </div>
                         <p class="mt-1 text-[12px] text-[#9a7a86]">{{ f.address || '地址待补充' }}</p>
-                        <p v-if="f.tags?.length" class="mt-1 text-[11px] text-[#b45309]">{{ f.tags.join(' · ') }}</p>
+                        <p class="mt-1 text-[11px]" :style="{ color: f.booked ? '#16a34a' : '#b45309' }">
+                          {{ f.booked ? '已预订' : '待预订' }}<template v-if="f.tags?.length"> · {{ f.tags.join(' · ') }}</template>
+                        </p>
                       </div>
                     </div>
                   </div>

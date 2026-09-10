@@ -309,6 +309,23 @@ async function moveDest(day, dest, dir) {
   if (view.value === 'map') drawSegments()
 }
 
+/* 复制 / 跨天移动 */
+const moveFor = ref(null)
+function toggleMove(day, d) {
+  const k = `${day.date}|${d.id}`
+  moveFor.value = moveFor.value === k ? null : k
+}
+async function copyDest(day, d) {
+  if (!props.canEdit) return
+  await store.copyDestination(props.plan.id, day.date, d.id)
+  if (view.value === 'map') drawSegments()
+}
+async function doMove(day, d, targetDate) {
+  await store.moveDestinationToDay(props.plan.id, day.date, d.id, targetDate)
+  moveFor.value = null
+  if (view.value === 'map') drawSegments()
+}
+
 /** 进入计划后自动优先计算缺失路段时长;遗留未算的会小规模重试几轮 */
 function scheduleAutoDurations() {
   if (!props.canEdit || autoRun.value) return
@@ -1356,6 +1373,28 @@ watch(
                       <button class="icon-btn !h-7 !w-7" title="下移" :disabled="di === day.destinations.length - 1 || d.stay_role" :class="di === day.destinations.length - 1 || d.stay_role ? 'opacity-30' : ''" @click="moveDest(day, d, 1)">
                         <i class="fa-solid fa-arrow-down text-[11px]" aria-hidden="true"></i>
                       </button>
+                      <button class="icon-btn !h-7 !w-7" title="复制此站" @click="copyDest(day, d)">
+                        <i class="fa-solid fa-copy text-[11px]" aria-hidden="true"></i>
+                      </button>
+                      <div class="relative">
+                        <button class="icon-btn !h-7 !w-7" title="移动到其他天" @click="toggleMove(day, d)">
+                          <i class="fa-solid fa-right-left text-[11px]" aria-hidden="true"></i>
+                        </button>
+                        <Transition name="scale-in">
+                          <div v-if="moveFor === `${day.date}|${d.id}`" class="card absolute bottom-9 left-0 z-30 max-h-56 w-44 overflow-y-auto p-1.5 shadow-pop">
+                            <p class="muted px-2 py-1 text-[11px]">移动到…</p>
+                            <button
+                              v-for="(dt, dti) in segDates"
+                              :key="dt"
+                              :disabled="dt === day.date"
+                              class="flex w-full items-center gap-2 rounded-[8px] px-2 py-1.5 text-left text-[12.5px] transition-colors hover:bg-surface-2 disabled:opacity-40"
+                              @click="doMove(day, d, dt)"
+                            >
+                              第{{ dti + 1 }}天 · {{ fmtDay(dt, false) }}
+                            </button>
+                          </div>
+                        </Transition>
+                      </div>
                     </template>
                     <button v-if="canEdit" class="icon-btn !h-7 !w-7" title="校正精确定位" @click="openDestEdit(day, d)">
                       <i class="fa-solid fa-location-crosshairs text-[11px]" aria-hidden="true"></i>
