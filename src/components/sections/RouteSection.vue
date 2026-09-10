@@ -14,7 +14,7 @@ import { fmtDay, dayIndex, eachDayISO, parseISO } from '@/utils/date'
 import { uid, PASTEL_GRADS } from '@/utils/misc'
 import { geocodePlace, navUrl, wgs2gcj } from '@/api/geocode'
 import { fetchDailyWeather, wxMeta, wxTempText } from '@/api/weather'
-import { drivingLeg, transitMinutes, fmtMinute, fmtRoadsText, transitLeg, walkingLeg, walkEstimate, fmtTransitSteps } from '@/api/route'
+import { drivingLeg, transitMinutes, fmtMinute, fmtRoadsText, transitLeg, walkingLeg, walkEstimate } from '@/api/route'
 import { isSupabase } from '@/api/supabase'
 import BaseModal from '@/components/ui/BaseModal.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
@@ -248,6 +248,17 @@ async function setMode(day, dest, mode) {
   await store.updateDestinationFields(props.plan.id, day.date, dest.id, { mode })
   dest.mode = mode
   await autoCalcLeg(day, dest)
+}
+
+/** 公交/步行步骤图标 */
+function stepIcon(s) {
+  const line = String(s?.line || '')
+  if (s?.mode === 'WALK' || /步行/.test(line)) return 'fa-person-walking'
+  if (/地铁|SUBWAY/i.test(s?.mode) || /地铁/.test(line)) return 'fa-train-subway'
+  if (/铁路|火车|RAILWAY/i.test(s?.mode) || /铁路|火车/.test(line)) return 'fa-train'
+  if (/轮渡|FERRY/i.test(s?.mode) || /轮渡|船/.test(line)) return 'fa-ship'
+  if (/打车|TAXI/i.test(s?.mode)) return 'fa-taxi'
+  return 'fa-bus'
 }
 
 /** 调整目的地顺序(上移/下移) */
@@ -1124,16 +1135,43 @@ watch(
                       </button>
                     </div>
                     <!-- 公交详细行程(地铁/公交/轮渡/步行接驳) -->
-                    <p
-                      v-if="d.mode === 'transit' && (d.transit_detail?.length || d.transit_min)"
-                      class="mt-1 flex items-start gap-1.5 text-[11.5px] leading-5 text-ink-soft"
+                    <div
+                      v-if="d.mode === 'transit' && d.transit_detail?.length"
+                      class="mt-1.5 space-y-1 rounded-[10px] bg-surface-2/60 px-2.5 py-2"
                     >
-                      <i class="fa-solid fa-route mt-0.5 text-[10px] text-primary/60" aria-hidden="true"></i>
-                      <span>
-                        <template v-if="d.transit_detail?.length">{{ fmtTransitSteps(d.transit_detail) }}</template>
-                        <template v-else>约 {{ d.distance_km || '?' }} km(估算)</template>
-                        <template v-if="d.transit_cost"> · 票价约 ¥{{ d.transit_cost }}</template>
-                      </span>
+                      <p class="flex items-center gap-1.5 text-[11px] font-semibold text-primary">
+                        <i class="fa-solid fa-route text-[10px]" aria-hidden="true"></i>
+                        全程约 {{ fmtMinute(d.transit_min) }}<template v-if="d.distance_km"> · {{ d.distance_km }} km</template><template v-if="d.transit_cost"> · 票价约 ¥{{ d.transit_cost }}</template>
+                      </p>
+                      <ol class="space-y-1">
+                        <li
+                          v-for="(s, si) in d.transit_detail"
+                          :key="si"
+                          class="flex items-start gap-1.5 text-[11.5px] leading-5 text-ink-soft"
+                        >
+                          <i :class="`fa-solid ${stepIcon(s)} mt-1 text-[10px] text-primary/70`" aria-hidden="true"></i>
+                          <span class="min-w-0">
+                            <template v-if="s.mode === 'WALK' || /步行/.test(s.line || '')">
+                              步行 {{ s.walk_m || 0 }} 米<template v-if="s.walk_min">(约 {{ s.walk_min }} 分钟)</template>
+                              <span v-if="s.instruction" class="muted"> · {{ s.instruction }}</span>
+                            </template>
+                            <template v-else>
+                              <b class="font-semibold text-ink">{{ s.line }}</b>
+                              <template v-if="s.from"> 从「{{ s.from }}」上车</template>
+                              <template v-if="s.to"> 到「{{ s.to }}」下车</template>
+                              <template v-if="s.via_stops"> · 经 {{ s.via_stops }} 站</template>
+                              <template v-if="s.min"> · 约 {{ s.min }} 分钟</template>
+                            </template>
+                          </span>
+                        </li>
+                      </ol>
+                    </div>
+                    <p
+                      v-else-if="d.mode === 'transit' && d.transit_min"
+                      class="mt-1 flex items-center gap-1.5 text-[11.5px] text-muted"
+                    >
+                      <i class="fa-solid fa-route text-[10px] text-primary/60" aria-hidden="true"></i>
+                      约 {{ fmtMinute(d.transit_min) }}<template v-if="d.distance_km"> · {{ d.distance_km }} km</template> · 未获取到公交详情,可点「算路程」重试
                     </p>
                     <!-- 步行距离与时长 -->
                     <p

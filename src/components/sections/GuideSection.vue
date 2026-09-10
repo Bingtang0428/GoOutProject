@@ -74,10 +74,30 @@ function canRemoveCmt(c) {
 const fetching = ref(false)
 const metaHint = ref('')
 
+/**
+ * 从小红书等分享文案里提取 URL 与标题。
+ * 例:「54 【重庆citywalk… - 茄汁鳗鱼饭 | 小红书…】 😆 B1Pyq… 😆 https://…」
+ */
+function parseShareText(raw) {
+  const text = String(raw || '')
+  const m = text.match(/https?:\/\/[^\s，。、；;"'）)】]+/i)
+  const url = m ? m[0].replace(/[)\]】」，。；;、]+$/, '') : ''
+  let title = ''
+  const bracket = text.match(/【([^】]+)】/)
+  if (bracket) title = bracket[1]
+  else if (url) title = text.replace(url, ' ').trim()
+  // 去掉「- 作者 | 小红书…」等尾巴与开头的序号
+  title = title.split(/\s*[-|｜]\s*/)[0].replace(/^\d+\s*/, '').replace(/小红书.*$/, '').trim()
+  return { url, title }
+}
+
 async function autoDetect() {
+  const parsed = parseShareText(form.url)
+  if (parsed.url && parsed.url !== form.url.trim()) form.url = parsed.url
+  if (parsed.title && !form.title) form.title = parsed.title
   const url = form.url.trim()
   if (!/^https?:\/\//i.test(url)) {
-    metaHint.value = '先粘贴 https:// 开头的分享链接'
+    metaHint.value = '先粘贴 https:// 开头的分享链接(整段分享文案也可以)'
     return
   }
   fetching.value = true
@@ -85,7 +105,7 @@ async function autoDetect() {
   try {
     const meta = await fetchLinkMeta(url)
     if (meta) {
-      if (!form.title) form.title = meta.title || ''
+      if (!form.title && meta.title) form.title = meta.title
       if (!form.image && meta.image) form.image = meta.image
       metaHint.value = meta.title ? '识别成功:标题与封面已自动填入,可继续修改' : '已识别链接,但未取到标题,请手动填写'
     } else {
@@ -94,6 +114,17 @@ async function autoDetect() {
   } finally {
     fetching.value = false
   }
+}
+
+/** 粘贴整段分享文案:先解析出 URL/标题,再自动识别 */
+function onUrlPaste(e) {
+  const text = e.clipboardData?.getData('text') || ''
+  const parsed = parseShareText(text)
+  if (!parsed.url) return // 没识别到链接就按默认粘贴
+  e.preventDefault()
+  form.url = parsed.url
+  if (parsed.title && !form.title) form.title = parsed.title
+  autoDetect()
 }
 
 // —— 新增收藏
@@ -281,7 +312,7 @@ async function save() {
         <div>
           <label class="flabel">原文链接 *</label>
           <div class="flex gap-2">
-            <input v-model="form.url" class="field flex-1" placeholder="粘贴小红书/B站/公众号等分享链接" type="url" @paste="setTimeout(autoDetect, 30)" />
+            <input v-model="form.url" class="field flex-1" placeholder="粘贴分享链接或整段分享文案(自动提取链接)" type="text" @paste="onUrlPaste" />
             <BaseButton variant="soft" size="sm" :loading="fetching" icon="fa-wand-magic-sparkles" @click="autoDetect">
               自动识别
             </BaseButton>
