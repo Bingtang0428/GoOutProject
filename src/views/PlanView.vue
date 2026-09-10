@@ -13,7 +13,7 @@ import { usePlansStore } from '@/stores/plans'
 import { useContentStore } from '@/stores/content'
 import { useAuthStore } from '@/stores/auth'
 import { usePresenceStore } from '@/stores/presence'
-import { pastelOf } from '@/utils/misc'
+import { pastelOf, memberOf } from '@/utils/misc'
 import { fmtRange, planDays, todayISO, relKey } from '@/utils/date'
 import { setCurrency } from '@/utils/money'
 import DesktopSidebar from '@/components/layout/DesktopSidebar.vue'
@@ -513,7 +513,7 @@ onBeforeUnmount(() => {
       <p v-if="!isSupabase" class="muted py-6 text-center text-[13px]">动态日志仅在云端模式下记录</p>
       <ul v-else class="space-y-2">
         <li v-for="l in planLogs" :key="l.id" class="card flex items-start gap-3 px-4 py-3">
-          <Avatar :name="l.actor?.name || '系统'" :size="30" />
+          <Avatar :name="l.actor?.name || '系统'" :size="30" :color="memberOf(plan, l.actor)?.color" :seed="l.actor?.id || l.actor?.name" />
           <div class="min-w-0 flex-1">
             <p class="text-[13.5px] text-ink-soft">
               <b class="font-semibold text-ink">{{ l.actor?.name || '系统' }}</b> {{ l.action }}

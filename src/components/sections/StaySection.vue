@@ -15,7 +15,7 @@ import BaseTag from '@/components/ui/BaseTag.vue'
 import GeoPlacePicker from '@/components/ui/GeoPlacePicker.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import { toast } from '@/composables/toast'
-import { parseShareText } from '@/utils/misc'
+import { parseShareText, memberOf } from '@/utils/misc'
 
 const props = defineProps({
   plan: { type: Object, required: true },
@@ -374,7 +374,7 @@ function tagTone(tag) {
             </div>
             <div v-if="s.votes?.length" class="mt-2 flex flex-wrap items-center gap-1.5">
               <span v-for="v in s.votes.slice(0, 8)" :key="v.id || v.name" class="chip chip-plain !px-1.5 !py-0.5" :title="v.name">
-                <Avatar :name="v.name" :size="16" :ring="false" :seed="v.id" />
+                <Avatar :name="v.name" :size="16" :ring="false" :seed="v.id" :color="memberOf(plan, v)?.color" />
                 <span class="max-w-[64px] truncate">{{ v.name }}</span>
               </span>
               <span v-if="s.votes.length > 8" class="muted text-[11px]">+{{ s.votes.length - 8 }} 人</span>

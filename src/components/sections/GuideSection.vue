@@ -8,7 +8,7 @@ import { useContentStore } from '@/stores/content'
 import { useAuthStore } from '@/stores/auth'
 import { isSupabase, storageUrl, uploadCover } from '@/api/supabase'
 import { fetchLinkMeta } from '@/api/metadata'
-import { hostOf, PASTEL_GRADS, parseShareText } from '@/utils/misc'
+import { hostOf, PASTEL_GRADS, parseShareText, memberOf } from '@/utils/misc'
 import { fmtSavedAt } from '@/utils/date'
 import BaseModal from '@/components/ui/BaseModal.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
@@ -257,7 +257,7 @@ async function save() {
             <Transition name="fade">
               <div v-if="openCmt === g.id" class="mt-3 space-y-2 rounded-[12px] bg-surface-2/50 p-3">
                 <div v-for="c in commentsOf(g.id)" :key="c.id" class="flex items-start gap-2.5">
-                  <Avatar :name="c.author?.name || '匿名'" :size="26" />
+                  <Avatar :name="c.author?.name || '匿名'" :size="26" :color="memberOf(plan, c.author)?.color" :seed="c.author?.id || c.author?.name" />
                   <div class="min-w-0 flex-1">
                     <p class="text-[12.5px] leading-relaxed text-ink-soft">
                       <b class="font-semibold text-ink">{{ c.author?.name || '匿名' }}</b> {{ c.text }}

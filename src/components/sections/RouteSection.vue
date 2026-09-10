@@ -12,7 +12,7 @@ import { useContentStore } from '@/stores/content'
 import { useAuthStore } from '@/stores/auth'
 import { usePresenceStore } from '@/stores/presence'
 import { fmtDay, dayIndex, eachDayISO, parseISO } from '@/utils/date'
-import { uid, PASTEL_GRADS } from '@/utils/misc'
+import { uid, PASTEL_GRADS, memberOf } from '@/utils/misc'
 import { geocodePlace, navUrl, wgs2gcj } from '@/api/geocode'
 import { fetchDailyWeather, wxMeta, wxTempText } from '@/api/weather'
 import { drivingLeg, transitMinutes, fmtMinute, fmtRoadsText, transitLeg, walkingLeg, walkEstimate } from '@/api/route'
@@ -1421,7 +1421,7 @@ watch(
                   <div v-if="openFor === `${day.date}|${d.id}`" class="border-t border-line/60 bg-surface-2/40 px-6 py-4">
                     <div v-if="commentsOf(plan.id, day.date, d.id).length" class="space-y-3">
                       <div v-for="c in commentsOf(plan.id, day.date, d.id)" :key="c.id" class="card flex gap-3 p-4" :class="c.status === 'done' ? 'opacity-70' : ''">
-                        <Avatar :name="c.author?.name" :size="30" />
+                        <Avatar :name="c.author?.name" :size="30" :color="memberOf(plan, c.author)?.color" :seed="c.author?.id || c.author?.name" />
                         <div class="min-w-0 flex-1">
                           <div class="mb-1 flex flex-wrap items-center gap-2">
                             <span class="text-[12.5px] font-semibold text-ink">{{ c.author?.name }}</span>

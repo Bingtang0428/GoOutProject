@@ -18,6 +18,7 @@ import Avatar from '@/components/ui/Avatar.vue'
 import BudgetPanel from './BudgetPanel.vue'
 import VehiclePanel from './VehiclePanel.vue'
 import { money } from '@/utils/money'
+import { memberOf } from '@/utils/misc'
 import { toast } from '@/composables/toast'
 import { fmtDay, todayISO } from '@/utils/date'
 
@@ -464,7 +465,7 @@ function linkChip(b) {
             </p>
             <p class="mt-1 flex flex-wrap items-center gap-2 text-[12px] text-muted">
               <template v-if="b.paid_by">
-                <Avatar :name="whoName(b.paid_by)" :size="18" :ring="false" />
+                <Avatar :name="whoName(b.paid_by)" :size="18" :ring="false" :color="memberOf(plan, b.paid_by)?.color" :seed="b.paid_by?.id || b.paid_by?.name" />
                 <span>{{ whoName(b.paid_by) }} 垫付</span>
               </template>
               <span v-else class="chip chip-plain !px-1.5 !py-0 !text-[11px]">

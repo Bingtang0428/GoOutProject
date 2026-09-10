@@ -73,6 +73,16 @@ export function initialOf(name = '') {
   return n[0].toUpperCase()
 }
 
+/**
+ * 在计划的成员/围观者里回查某人(快照 {id,name} 可能不含配色)。
+ * 用于让日志/评论等快照头像跟随成员当前的头像配色。
+ */
+export function memberOf(plan, ref) {
+  if (!ref) return null
+  const all = [...(plan?.members || []), ...(plan?.viewers || [])]
+  return all.find((m) => (ref.id && m.id === ref.id) || (ref.name && m.name === ref.name)) || null
+}
+
 /** URL 域名提取,如 bilibili.com */
 export function hostOf(url = '') {
   try {
