@@ -140,7 +140,15 @@ export async function transitLeg(a, b, city = '') {
     if (!ct.includes('application/json')) return { error: 'api_not_deployed' }
     const j = await res.json()
     if (!j?.ok) return { error: j?.reason || 'no_route' }
-    return { min: j.min, km: j.km, cost: j.cost ?? 0, steps: Array.isArray(j.steps) ? j.steps : [], fromApi: true }
+    return {
+      min: j.min,
+      km: j.km,
+      cost: j.cost ?? 0,
+      steps: Array.isArray(j.steps) ? j.steps : [],
+      fromApi: true,
+      segCount: Number(j.segCount) || 0,
+      segKinds: Array.isArray(j.segKinds) ? j.segKinds : []
+    }
   } catch {
     return { error: 'network' }
   }

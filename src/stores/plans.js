@@ -13,7 +13,7 @@
 // ============================================================
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { uid, makeUuid, isUuid } from '@/utils/misc'
+import { uid, makeUuid, isUuid, missingColumn } from '@/utils/misc'
 import { supabase, isSupabase } from '@/api/supabase'
 import * as localDb from '@/api/localDb'
 import { useAuthStore } from '@/stores/auth'
@@ -186,7 +186,23 @@ export const usePlansStore = defineStore('plans', () => {
       // ★ 乐观更新:界面立即生效;失败回滚
       const before = idx !== -1 ? { ...plans.value[idx] } : null
       if (idx !== -1) plans.value[idx] = { ...plans.value[idx], ...payload }
-      const { error } = await supabase.from('plans').update(payload).eq('id', id)
+      // 兼容未升级的数据库:去掉不存在的列后重试(如 settled / settled_transfers / currency)
+      let data = payload
+      let error = null
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const res = await supabase.from('plans').update(data).eq('id', id)
+        error = res.error
+        if (!error) break
+        const bad = missingColumn(error.message)
+        if (bad && Object.prototype.hasOwnProperty.call(data, bad)) {
+          const next = { ...data }
+          delete next[bad]
+          data = next
+          error = null
+          continue
+        }
+        break
+      }
       if (error) {
         if (idx !== -1 && before) plans.value[idx] = before
         console.warn('[plans] 更新失败', error.message)

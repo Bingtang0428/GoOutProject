@@ -31,20 +31,20 @@ function pt(s) {
   return { lng: Number(m[1]), lat: Number(m[3]) }
 }
 
-/** 逆地理编码取城市名(origin 无城市参数时用) */
-async function regeoCity(lng, lat, key) {
+/** 逆地理编码取城市名与 adcode(无城市参数时用) */
+async function regeoInfo(lng, lat, key) {
   try {
     const res = await fetch(
       `https://restapi.amap.com/v3/geocode/regeo?location=${lng},${lat}&key=${key}&extensions=base`
     )
     const data = await res.json()
-    if (data.status !== '1') return ''
+    if (data.status !== '1') return null
     const ac = data.regeocode?.addressComponent
-    if (!ac) return ''
+    if (!ac) return null
     const city = typeof ac.city === 'string' && ac.city ? ac.city : ''
-    return city || ac.province || ''
+    return { name: city || ac.province || '', adcode: ac.adcode || '' }
   } catch {
-    return ''
+    return null
   }
 }
 
@@ -78,16 +78,20 @@ export async function onRequestGet(context) {
     let data = await callTransit(key, p1, p2, city, city)
     const failed = () => data.status !== '1' || !data.route?.transits?.length
 
-    // 首次失败/无方案:用逆地理取起终点城市,并轮换几种策略重试(支持跨城)
+    // 首次失败/无方案:用逆地理取起终点城市,并轮换城市名/adcode 与策略重试(支持跨城)
     if (failed()) {
-      const [c1, c2] = await Promise.all([regeoCity(p1.lng, p1.lat, key), regeoCity(p2.lng, p2.lat, key)])
-      const oc = c1 || city
-      const dc = c2 || city
-      if (!oc) return json({ ok: false, reason: 'no_city' })
-      for (const st of ['0', '1', '2']) {
-        data = await callTransit(key, p1, p2, oc, dc, st)
-        city = oc
-        if (!failed()) break
+      const [i1, i2] = await Promise.all([regeoInfo(p1.lng, p1.lat, key), regeoInfo(p2.lng, p2.lat, key)])
+      const tries = []
+      if (i1?.name) tries.push([i1.name, i2?.name || i1.name])
+      if (i1?.adcode) tries.push([i1.adcode, i2?.adcode || i1.adcode])
+      if (city) tries.push([city, city])
+      if (!tries.length) return json({ ok: false, reason: 'no_city' })
+      outer: for (const [c, cd] of tries) {
+        for (const st of ['0', '1', '2']) {
+          data = await callTransit(key, p1, p2, c, cd, st)
+          city = c
+          if (!failed()) break outer
+        }
       }
     }
 
@@ -102,8 +106,9 @@ export async function onRequestGet(context) {
     const distanceM = Number(best.distance) || Number(route.distance) || 0
     if (!durationSec) return json({ ok: false, reason: 'no_duration' })
     const steps = []
+    const segs = best.segments || []
 
-    for (const seg of best.segments || []) {
+    for (const seg of segs) {
       if (seg.walking) {
         const dist = Number(seg.walking.distance) || 0
         const wmin = Math.max(1, Math.ceil(dist / 80))
@@ -153,6 +158,8 @@ export async function onRequestGet(context) {
       km: Math.round((distanceM / 1000) * 10) / 10,
       cost: Number(best.cost) || 0,
       walking_m: Number(best.walking_distance) || 0,
+      segCount: segs.length,
+      segKinds: segs.map((s) => Object.keys(s || {}).join('+')).slice(0, 12),
       steps: steps.slice(0, 24)
     })
   } catch (e) {

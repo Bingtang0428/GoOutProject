@@ -83,6 +83,29 @@ export function hostOf(url = '') {
 }
 
 /**
+ * 从 PostgREST/Postgres 错误里识别「缺失的列名」。
+ * 兼容:
+ *   column "reads" of relation "reminders" does not exist
+ *   column reminders.reads does not exist
+ *   Could not find the 'reads' column of 'reminders' in the schema cache
+ */
+export function missingColumn(msg) {
+  const s = String(msg || '')
+  if (!/does not exist|schema cache/i.test(s)) return null
+  const patterns = [
+    /column\s+"([a-zA-Z0-9_]+)"/i,
+    /column\s+'([a-zA-Z0-9_]+)'/i,
+    /'([a-zA-Z0-9_]+)'\s+column/i,
+    /\.([a-zA-Z0-9_]+)\s+does not exist/i
+  ]
+  for (const p of patterns) {
+    const m = p.exec(s)
+    if (m) return m[1]
+  }
+  return null
+}
+
+/**
  * 从分享文案中提取 URL 与标题。
  * 支持:小红书「【标题 - 作者 | 小红书…】 … https://…」、
  *       携程「#携程旅行#分享酒店:<城市><酒店名>…,https://…」等。

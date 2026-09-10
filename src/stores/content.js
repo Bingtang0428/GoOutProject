@@ -14,7 +14,7 @@
 // ============================================================
 import { defineStore } from 'pinia'
 import { ref, reactive } from 'vue'
-import { uid, makeUuid, isUuid } from '@/utils/misc'
+import { uid, makeUuid, isUuid, missingColumn } from '@/utils/misc'
 import { supabase, isSupabase } from '@/api/supabase'
 import { useAuthStore } from '@/stores/auth'
 import * as localDb from '@/api/localDb'
@@ -115,15 +115,29 @@ export const useContentStore = defineStore('content', () => {
     const bucket = ensureBucket(planId)
     const optimisticId = row.id
     applyById(planId, key, row)
-    const { data, error } = await supabase.from(table).insert(row).select().single()
-    if (error) {
+    let payload = row
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const { data, error } = await supabase.from(table).insert(payload).select().single()
+      if (!error) {
+        applyById(planId, key, data) // 以服务端行(含默认值)为准
+        await maybeLog(planId, key, '新增', labelOf(key, data))
+        return data
+      }
+      // 未升级的数据库:去掉不存在的列后重试
+      const bad = missingColumn(error.message)
+      if (bad && Object.prototype.hasOwnProperty.call(payload, bad)) {
+        const next = { ...payload }
+        delete next[bad]
+        payload = next
+        continue
+      }
       bucket[key] = bucket[key].filter((r) => r.id !== optimisticId) // 回滚乐观行
       console.warn(`[content] 写入 ${table} 失败:`, error.message)
+      toast('保存失败,请稍后重试', 'error')
       throw error
     }
-    applyById(planId, key, data) // 以服务端行(含默认值)为准
-    await maybeLog(planId, key, '新增', labelOf(key, data))
-    return data
+    bucket[key] = bucket[key].filter((r) => r.id !== optimisticId)
+    throw new Error('insert failed')
   }
 
   /** 合并数组:以本地为准,把服务端独有的项追加到末尾(保住他人同时新增) */
@@ -166,10 +180,10 @@ export const useContentStore = defineStore('content', () => {
 
     if (error) {
       // 兼容未升级的数据库:遇到「列不存在」时去掉该字段重试(如 reads/targets)
-      const m = /column\s+"?([a-zA-Z0-9_]+)"?\s+.*does not exist/i.exec(error.message || '')
-      if (m) {
+      const bad = missingColumn(error.message)
+      if (bad && Object.prototype.hasOwnProperty.call(patch, bad)) {
         const clean = { ...patch }
-        delete clean[m[1]]
+        delete clean[bad]
         const { data: d3, error: e3 } = await supabase.from(table).update(clean).eq('id', id).select()
         if (!e3 && d3?.[0]) {
           applyById(planId, key, d3[0])

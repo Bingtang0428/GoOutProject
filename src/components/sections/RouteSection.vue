@@ -208,7 +208,9 @@ async function autoCalcLeg(day, dest) {
           transit_cost: leg.cost || 0,
           leg_estimated: false,
           leg_from_api: true,
-          leg_error: ''
+          leg_error: '',
+          leg_seg_count: leg.segCount || 0,
+          leg_seg_kinds: leg.segKinds || []
         })
       } else {
         // 无真实公交数据 → 退回自驾 × 系数估算,并记录原因供排查
@@ -1285,7 +1287,8 @@ watch(
                     >
                       <i class="fa-solid fa-route text-[10px] text-primary/60" aria-hidden="true"></i>
                       约 {{ fmtMinute(d.transit_min) }}<template v-if="d.distance_km"> · {{ d.distance_km }} km</template>
-                      <template v-if="d.leg_from_api"> · 该路线以步行为主,暂无乘车换乘段</template>
+                      <template v-if="d.leg_from_api && d.leg_seg_count > 0"> · 接口返回 {{ d.leg_seg_count }} 段但未识别为乘车段({{ (d.leg_seg_kinds || []).join(', ') }})</template>
+                      <template v-else-if="d.leg_from_api"> · 接口未返回分段(可能高德未开通公交规划或该城市无数据)</template>
                       <template v-else> · 未获取到公交详情({{ legErrorText(d.leg_error) }})</template>
                     </p>
                     <!-- 步行距离与时长 -->
