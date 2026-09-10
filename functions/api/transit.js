@@ -109,23 +109,24 @@ export async function onRequestGet(context) {
     const segs = best.segments || []
 
     for (const seg of segs) {
-      if (seg.walking) {
-        const dist = Number(seg.walking.distance) || 0
-        const wmin = Math.max(1, Math.ceil(dist / 80))
-        const instr = (seg.walking.steps || [])
-          .map((s) => s.instruction)
-          .filter(Boolean)
-          .join(';')
-          .slice(0, 80)
-        steps.push({ mode: 'WALK', line: '步行', walk_m: Math.round(dist), walk_min: wmin, instruction: instr })
-        continue
-      }
       const bus = seg.bus?.buslines?.[0]
-      if (bus) {
-        const type = MODE_TEXT[bus.type] || (bus.type ? bus.type : '公交')
+      const rail = seg.railway
+      const taxi = seg.taxi
+      const walk = seg.walking
+      // ★ 高德每段同时带全部键,未用到的为空对象 {};必须判断「非空」而非「存在」
+      const hasBus = bus && (bus.name || bus.id)
+      const hasRail = rail && (rail.name || rail.id || rail.departure_stop)
+      const hasTaxi = taxi && (Number(taxi.duration) > 0 || Number(taxi.distance) > 0)
+      const walkDist = Number(walk?.distance) || 0
+      const hasWalk = walk && (walkDist > 0 || (Array.isArray(walk.steps) && walk.steps.length))
+
+      if (hasBus) {
+        const typeStr = String(bus.type || '')
+        const nameStr = String(bus.name || '')
+        const mode = /地铁/.test(typeStr + nameStr) ? 'SUBWAY' : /轮渡|船/.test(typeStr + nameStr) ? 'FERRY' : 'BUS'
         steps.push({
-          mode: bus.type || 'BUS',
-          line: bus.name || type,
+          mode,
+          line: bus.name || MODE_TEXT[mode] || '公交',
           from: bus.departure_stop?.name || '',
           to: bus.arrival_stop?.name || '',
           via_stops: Number(bus.via_num) || 0,
@@ -133,21 +134,31 @@ export async function onRequestGet(context) {
         })
         continue
       }
-      if (seg.railway) {
+      if (hasRail) {
         steps.push({
           mode: 'RAILWAY',
-          line: seg.railway.name || '铁路',
-          from: seg.railway.departure_stop?.name || '',
-          to: seg.railway.arrival_stop?.name || '',
-          min: Math.max(1, Math.ceil((Number(seg.railway.time) || 0) / 60))
+          line: rail.name || '铁路',
+          from: rail.departure_stop?.name || '',
+          to: rail.arrival_stop?.name || '',
+          min: Math.max(1, Math.ceil((Number(rail.time) || 0) / 60))
         })
         continue
       }
-      if (seg.taxi) {
-        steps.push({ mode: 'TAXI', line: '打车', min: Math.max(1, Math.ceil((Number(seg.taxi.duration) || 0) / 60)) })
+      if (hasTaxi) {
+        steps.push({ mode: 'TAXI', line: '打车', min: Math.max(1, Math.ceil((Number(taxi.duration) || 0) / 60)) })
         continue
       }
-      steps.push({ mode: 'OTHER', line: lineLabel(seg) })
+      if (hasWalk) {
+        const wmin = Math.max(1, Math.ceil(walkDist / 80))
+        const instr = (walk.steps || [])
+          .map((s) => s.instruction)
+          .filter(Boolean)
+          .join(';')
+          .slice(0, 80)
+        steps.push({ mode: 'WALK', line: '步行', walk_m: Math.round(walkDist), walk_min: wmin, instruction: instr })
+        continue
+      }
+      // 进/出站等辅助段,忽略不计入乘车
     }
 
     return json({
