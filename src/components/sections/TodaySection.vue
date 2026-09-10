@@ -14,6 +14,7 @@ import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseTag from '@/components/ui/BaseTag.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import Avatar from '@/components/ui/Avatar.vue'
+import InfoHint from '@/components/ui/InfoHint.vue'
 
 const props = defineProps({
   plan: { type: Object, required: true },
@@ -132,6 +133,7 @@ async function readReminder(r) {
         <p class="muted mt-1">一眼看出还要做什么 —— 下一站、待办、提醒、住宿</p>
       </div>
       <BaseButton v-if="activeDay" icon="fa-person-walking-arrow-right" @click="travel = true">出行模式</BaseButton>
+      <InfoHint align="right" text="出行模式=全屏放大,只显示下一站与一键导航,方便旅途中随时查看。" />
     </div>
 
     <div v-if="!activeDay" class="card p-6">

@@ -15,6 +15,7 @@ import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseTag from '@/components/ui/BaseTag.vue'
 import Avatar from '@/components/ui/Avatar.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
+import InfoHint from '@/components/ui/InfoHint.vue'
 import { toast } from '@/composables/toast'
 
 const props = defineProps({
@@ -184,6 +185,10 @@ async function save() {
         <h2 class="title-1 flex items-center gap-3">
           <i class="fa-solid fa-bookmark text-[19px] text-primary" aria-hidden="true"></i>
           收藏攻略
+          <InfoHint
+            align="left"
+            text="粘贴分享链接或整段分享文案,可自动识别标题与封面(支持小红书、携程等);成员可点赞与评论。"
+          />
           <span v-if="guides.length" class="chip chip-brand">{{ guides.length }} 篇</span>
         </h2>
         <p class="muted mt-1">把刷到的好文章、好视频攒进这一程,出发前慢慢看</p>

@@ -18,6 +18,7 @@ import BaseModal from '@/components/ui/BaseModal.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import GeoPlacePicker from '@/components/ui/GeoPlacePicker.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
+import InfoHint from '@/components/ui/InfoHint.vue'
 import 'leaflet/dist/leaflet.css'
 
 const props = defineProps({
@@ -358,6 +359,10 @@ function firstFreeDay() {
         <h2 class="title-1 flex items-center gap-3">
           <i class="fa-solid fa-car-side text-[19px] text-primary" aria-hidden="true"></i>
           自驾规划
+          <InfoHint
+            align="left"
+            text="按天规划驾驶段(起点→终点);自动走高德真实路网算时长/里程/途经道路,可一键同步进「路线规划」。"
+          />
           <span v-if="totals.n" class="chip chip-brand">{{ totals.n }} 段驾驶</span>
           <span v-if="syncBusy" class="chip chip-amber">
             <i class="fa-solid fa-circle-notch" style="animation: spin 0.9s linear infinite" aria-hidden="true"></i>

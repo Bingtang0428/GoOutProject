@@ -11,6 +11,7 @@ import { fmtDay, fmtRange, fmtSavedAt, todayISO, relKey } from '@/utils/date'
 import { pastelOf } from '@/utils/misc'
 import { money as fmtMoney } from '@/utils/money'
 import { fmtTransitSteps } from '@/api/route'
+import InfoHint from '@/components/ui/InfoHint.vue'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -349,6 +350,10 @@ const grad = computed(() => {
                   <i v-else class="fa-solid fa-image" aria-hidden="true"></i>
                   下载长图
                 </button>
+                <InfoHint
+                  align="right"
+                  text="另存为 PDF=调起打印后选择「另存为 PDF」;下载长图=把整张行程单导出为一张 PNG 图片。"
+                />
               </div>
             </footer>
           </div>

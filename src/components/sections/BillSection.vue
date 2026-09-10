@@ -17,6 +17,7 @@ import EmptyState from '@/components/ui/EmptyState.vue'
 import Avatar from '@/components/ui/Avatar.vue'
 import BudgetPanel from './BudgetPanel.vue'
 import VehiclePanel from './VehiclePanel.vue'
+import InfoHint from '@/components/ui/InfoHint.vue'
 import { money } from '@/utils/money'
 import { memberOf } from '@/utils/misc'
 import { toast } from '@/composables/toast'
@@ -300,6 +301,10 @@ function linkChip(b) {
         <h2 class="title-1 flex flex-wrap items-center gap-3">
           <i class="fa-solid fa-scale-balanced text-[19px] text-primary" aria-hidden="true"></i>
           分账
+          <InfoHint
+            align="left"
+            text="记录每笔钱谁垫付、谁分摊,自动算出每人应收/应补与最省事的转账方案;结算归档后会锁定账单。"
+          />
           <span v-if="bills.length" class="chip chip-brand">{{ bills.length }} 笔</span>
           <span v-if="totalAmount" class="chip chip-amber">{{ money(totalAmount) }}</span>
           <span v-if="settled" class="chip chip-success"><i class="fa-solid fa-lock text-[10px]" aria-hidden="true"></i>已结算归档</span>
@@ -376,6 +381,9 @@ function linkChip(b) {
         <i :class="`fa-solid ${t.icon}`" aria-hidden="true"></i>{{ t.label }}
       </button>
     </nav>
+    <p class="muted -mt-4 mb-5 text-[11.5px]">
+      <InfoHint align="left" text="记账=逐笔明细与按人结算;预算看板=总预算与花费分布;车辆里程=油耗与每公里成本。" />
+    </p>
 
     <Transition name="fade-up" mode="out-in">
       <BudgetPanel v-if="mode === 'budget'" :key="'budget'" :plan="plan" />
@@ -408,6 +416,7 @@ function linkChip(b) {
             <p class="flex items-center gap-2 text-[13.5px] font-semibold text-ink">
               <i class="fa-solid fa-arrows-rotate text-primary" aria-hidden="true"></i>转账建议(最省事)
               <span class="muted text-[11.5px] font-normal">标记已转账后即为完成</span>
+              <InfoHint align="left" text="根据每人的垫付与应摊,自动撮合出笔数最少的转账方案。" />
             </p>
             <BaseButton v-if="canEdit" size="sm" variant="soft" icon="fa-check-double" @click="confirmAllTransfers">全部标记已转</BaseButton>
           </div>
@@ -575,6 +584,12 @@ function linkChip(b) {
 
         <div>
           <label class="flabel">分摊方式</label>
+          <div class="mb-1.5">
+            <InfoHint
+              align="left"
+              text="人均均摊=金额÷人数;按项目份额=按你填写的比例分摊;不分摊=个人支出,不计入结算。"
+            />
+          </div>
           <div class="flex flex-wrap gap-2">
             <button
               type="button"

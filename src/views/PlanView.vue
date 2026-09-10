@@ -25,6 +25,7 @@ import BaseModal from '@/components/ui/BaseModal.vue'
 import Avatar from '@/components/ui/Avatar.vue'
 import BaseTag from '@/components/ui/BaseTag.vue'
 import AvatarStack from '@/components/ui/AvatarStack.vue'
+import InfoHint from '@/components/ui/InfoHint.vue'
 import RouteSection from '@/components/sections/RouteSection.vue'
 import TodaySection from '@/components/sections/TodaySection.vue'
 import DriveSection from '@/components/sections/DriveSection.vue'
@@ -367,6 +368,10 @@ onBeforeUnmount(() => {
               <button v-if="isOwner" class="btn btn-danger-soft btn-sm" @click="showDelete = true">
                 <i class="fa-solid fa-trash-can" aria-hidden="true"></i>删除
               </button>
+              <InfoHint
+                align="right"
+                text="最近动态=成员改动记录;体检=自动检查行程冲突与遗漏;复盘=结束后的花费与总结;导出行程单=PDF/长图;生成PPT=幻灯片。"
+              />
             </div>
           </div>
 

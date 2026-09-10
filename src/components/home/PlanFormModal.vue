@@ -9,6 +9,7 @@ import BaseModal from '@/components/ui/BaseModal.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import Avatar from '@/components/ui/Avatar.vue'
 import CityInput from '@/components/ui/CityInput.vue'
+import InfoHint from '@/components/ui/InfoHint.vue'
 
 // 新建 / 编辑计划弹窗
 // Props: modelValue / plan(null=新建)   Emits: save(payload)
@@ -116,7 +117,10 @@ async function save() {
       </div>
 
       <div>
-        <label class="flabel">集合城市(创建者设置,队员大交通自动带入)</label>
+        <label class="flabel">
+          集合城市(创建者设置,队员大交通自动带入)
+          <InfoHint align="left" text="大家先汇合的城市;队员在大交通里会自动带入,可按自己行程修改。" />
+        </label>
         <CityInput v-model="form.start_city" placeholder="选择集合城市(省市)" />
       </div>
 

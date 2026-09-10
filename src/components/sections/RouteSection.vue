@@ -23,6 +23,7 @@ import BaseTag from '@/components/ui/BaseTag.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import Avatar from '@/components/ui/Avatar.vue'
 import GeoPlacePicker from '@/components/ui/GeoPlacePicker.vue'
+import InfoHint from '@/components/ui/InfoHint.vue'
 import 'leaflet/dist/leaflet.css'
 
 const props = defineProps({
@@ -994,6 +995,10 @@ watch(
         <h2 class="title-1 flex flex-wrap items-center gap-3">
           <i class="fa-solid fa-route text-[19px] text-primary" aria-hidden="true"></i>
           路线规划
+          <InfoHint
+            align="left"
+            text="逐日排程 + 地图。每段可选 自驾/公交/步行 并自动算路程;选定的酒店会作为当天行程的起点/终点。"
+          />
           <span v-if="totalDest" class="chip chip-brand">{{ totalDest }} 个地点</span>
           <span v-if="autoRun" class="chip chip-amber">
             <i class="fa-solid fa-circle-notch" style="animation: spin 0.9s linear infinite" aria-hidden="true"></i>
@@ -1068,6 +1073,7 @@ watch(
                 @click="setMapStyle('roads')"
               >按路网</button>
             </span>
+            <InfoHint align="right" text="按天:每天一种颜色;按路网:按 高速/国道/省道 等类型分段着色。" />
           </div>
         </div>
         <!-- 高度自适应:小屏按视口比例,避免半屏被地图占掉 -->
@@ -1209,6 +1215,10 @@ watch(
                     <p v-if="d.note" class="mt-0.5 text-[12.5px] leading-relaxed text-muted">{{ d.note }}</p>
                     <!-- 交通方式:自驾 / 公交 / 步行(每天第一个行程无需选择) -->
                     <div v-if="canEdit && di > 0" class="mt-1.5 flex flex-wrap items-center gap-1.5">
+                      <InfoHint
+                        align="left"
+                        text="选择从上一站到这里的交通方式;公交会给出地铁/公交/轮渡换乘明细,步行给出距离与时长。"
+                      />
                       <button
                         v-for="m in [
                           { key: 'car', icon: 'fa-car-side', label: '自驾' },
@@ -1337,6 +1347,10 @@ watch(
                       ></i>
                       <template v-if="canEdit && participants.length">
                         <span class="muted text-[11px]">司机(最多 {{ vehicleCount }} 名):</span>
+                        <InfoHint
+                          align="left"
+                          text="可选司机数量取决于车辆数量(在「分账&车辆 → 车辆里程」里登记的车辆数)。"
+                        />
                         <button
                           v-for="p in participants"
                           :key="p.id"

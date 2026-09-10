@@ -14,6 +14,7 @@ import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseTag from '@/components/ui/BaseTag.vue'
 import GeoPlacePicker from '@/components/ui/GeoPlacePicker.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
+import InfoHint from '@/components/ui/InfoHint.vue'
 import { toast } from '@/composables/toast'
 import { parseShareText, memberOf } from '@/utils/misc'
 
@@ -218,6 +219,10 @@ function tagTone(tag) {
         <h2 class="title-1 flex flex-wrap items-center gap-3">
           <i class="fa-solid fa-bed text-[19px] text-primary" aria-hidden="true"></i>
           食宿安排
+          <InfoHint
+            align="left"
+            text="住宿/餐厅候选可让成员票选,选定后自动同步进当天行程;酒店会作为当天行程的起点/终点。"
+          />
           <span class="chip chip-brand">{{ stays.length }} 家</span>
           <span class="chip chip-success">{{ bookedCount }} 已预订</span>
           <span class="chip chip-amber">{{ foodCount }} 家餐厅</span>
@@ -360,6 +365,7 @@ function tagTone(tag) {
                 <i class="fa-solid fa-hand text-[11px] text-primary/70" aria-hidden="true"></i>
                 成员票选
                 <span v-if="s.votes?.length" class="chip chip-brand !px-2 !py-0 text-[10.5px]">{{ s.votes.length }} 票</span>
+                <InfoHint align="left" text="每人可投一票,票数只作参考;最终由一人「选定并入路线」。" />
               </p>
               <button
                 v-if="canEdit && me.name"

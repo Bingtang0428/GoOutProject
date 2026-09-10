@@ -16,6 +16,7 @@ import BaseTag from '@/components/ui/BaseTag.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import Avatar from '@/components/ui/Avatar.vue'
 import CityInput from '@/components/ui/CityInput.vue'
+import InfoHint from '@/components/ui/InfoHint.vue'
 
 const props = defineProps({
   plan: { type: Object, required: true },
@@ -217,6 +218,10 @@ const DIR_META = {
         <h2 class="title-1 flex flex-wrap items-center gap-3">
           <i class="fa-solid fa-plane-departure text-[19px] text-primary" aria-hidden="true"></i>
           大交通企划
+          <InfoHint
+            align="left"
+            text="记录每个人怎么到达集合点、怎么离开;可一次给多名队员绑定同一段行程,到达与离开分开填写。"
+          />
           <span v-if="presence.editors('transit').length" class="chip chip-amber" :title="presence.editors('transit').map((e) => e.name).join('、')">
             <span class="dot"></span>{{ presence.editors('transit').map((e) => e.name).join('、') }} 正在编辑
           </span>
