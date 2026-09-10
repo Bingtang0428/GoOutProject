@@ -271,6 +271,31 @@ async function printPdf() {
     busy.value = false
   }
 }
+
+/** 导出真正的 .pptx(每页为一张幻灯片图片) */
+async function downloadPptx() {
+  busy.value = true
+  notice.value = ''
+  try {
+    await nextTick()
+    const canvases = await renderAll()
+    const PptxGenJS = (await import('pptxgenjs')).default
+    const pptx = new PptxGenJS()
+    pptx.defineLayout({ name: 'WIDE', width: 10, height: 5.625 })
+    pptx.layout = 'WIDE'
+    for (const c of canvases) {
+      const slide = pptx.addSlide()
+      slide.addImage({ data: c.toDataURL('image/png'), x: 0, y: 0, w: 10, h: 5.625 })
+    }
+    await pptx.writeFile({ fileName: `${props.plan.name || '旅行'}.pptx` })
+    notice.value = `已导出 PPTX(${canvases.length} 页)。`
+  } catch (e) {
+    notice.value = 'PPTX 生成失败,可改用「打印 / 另存 PDF」或导出图片。'
+    console.warn('[pptx]', e)
+  } finally {
+    busy.value = false
+  }
+}
 </script>
 
 <template>
@@ -335,7 +360,7 @@ async function printPdf() {
                     </p>
                   </div>
 
-                  <!-- 每日行程(可多页) -->
+                  <!-- 每日行程(可多页):地图与行程左右排版 -->
                   <div v-else-if="s.kind === 'day'" class="flex h-full flex-col p-6">
                     <div class="flex flex-wrap items-baseline justify-between gap-2">
                       <h2 class="text-[19px] font-bold text-[#b75973]">
@@ -345,28 +370,30 @@ async function printPdf() {
                       <span class="text-[12px] text-[#9a7a86]">{{ s.day.title || '' }}</span>
                     </div>
 
-                    <img
-                      v-if="s.page === 0"
-                      :src="getMap(s.day)"
-                      alt="当日路线"
-                      class="mt-2 w-full rounded-[12px] bg-[#f7f2f4]"
-                      style="height: 172px; object-fit: contain"
-                    />
-                    <p v-if="s.page === 0 && mapMissing(s.day)" class="mt-1 text-[10.5px] text-[#9a7a86]">
-                      <i class="fa-solid fa-circle-info mr-1" aria-hidden="true"></i>{{ mapMissing(s.day) }} 个地点缺少坐标,未显示在地图上
-                    </p>
-
-                    <ol class="mt-3 flex-1 space-y-1.5 overflow-hidden">
-                      <li v-for="(x, xi) in s.items" :key="x.id" class="flex items-start gap-2 text-[13px] text-[#4a3440]">
-                        <span class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#b75973] text-[10px] font-bold text-white">{{ s.offset + xi + 1 }}</span>
-                        <span class="min-w-0 flex-1">
-                          <b class="font-semibold">{{ x.time || '全天' }}</b> {{ x.place }}
-                          <span v-if="tagOf(x) === 'stay'" class="ml-1 rounded-full bg-[#fdf4f8] px-1.5 py-0.5 text-[10px] font-semibold text-[#b75973]">🏨 住宿</span>
-                          <span v-else-if="tagOf(x) === 'food'" class="ml-1 rounded-full bg-[#fff8ec] px-1.5 py-0.5 text-[10px] font-semibold text-[#b45309]">🍽 餐厅</span>
-                          <span v-if="x.note" class="block text-[11px] text-[#9a7a86]">{{ x.note }}</span>
-                        </span>
-                      </li>
-                    </ol>
+                    <div class="mt-2 flex min-h-0 flex-1 gap-4">
+                      <!-- 左:路线地图 -->
+                      <div class="flex w-[46%] shrink-0 flex-col">
+                        <div v-if="s.page === 0" class="min-h-0 flex-1 overflow-hidden rounded-[12px] bg-[#f7f2f4]">
+                          <img :src="getMap(s.day)" alt="当日路线" class="h-full w-full" style="object-fit: contain" />
+                        </div>
+                        <div v-else class="flex min-h-0 flex-1 items-center justify-center rounded-[12px] bg-[#f7f2f4] text-[12px] text-[#9a7a86]">路线见第 1 页</div>
+                        <p v-if="s.page === 0 && mapMissing(s.day)" class="mt-1 text-[10.5px] text-[#9a7a86]">
+                          <i class="fa-solid fa-circle-info mr-1" aria-hidden="true"></i>{{ mapMissing(s.day) }} 个地点缺少坐标,未显示在地图上
+                        </p>
+                      </div>
+                      <!-- 右:行程列表 -->
+                      <ol class="min-w-0 flex-1 space-y-1.5 overflow-hidden">
+                        <li v-for="(x, xi) in s.items" :key="x.id" class="flex items-start gap-2 text-[13px] text-[#4a3440]">
+                          <span class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#b75973] text-[10px] font-bold text-white">{{ s.offset + xi + 1 }}</span>
+                          <span class="min-w-0 flex-1">
+                            <b class="font-semibold">{{ x.time || '全天' }}</b> {{ x.place }}
+                            <span v-if="tagOf(x) === 'stay'" class="ml-1 rounded-full bg-[#fdf4f8] px-1.5 py-0.5 text-[10px] font-semibold text-[#b75973]">🏨 住宿</span>
+                            <span v-else-if="tagOf(x) === 'food'" class="ml-1 rounded-full bg-[#fff8ec] px-1.5 py-0.5 text-[10px] font-semibold text-[#b45309]">🍽 餐厅</span>
+                            <span v-if="x.note" class="block text-[11px] text-[#9a7a86]">{{ x.note }}</span>
+                          </span>
+                        </li>
+                      </ol>
+                    </div>
 
                     <div v-if="s.page === 0 && dayTodos(s.index + 1).length" class="mt-2 rounded-[10px] bg-[#fff7e6] px-3 py-1.5">
                       <b class="text-[11px] text-[#b45309]">今日待办</b>
@@ -468,14 +495,17 @@ async function printPdf() {
             <footer class="flex flex-wrap items-center justify-between gap-3 border-t border-line/70 px-6 py-4">
               <p v-if="notice" class="muted text-[12px]">{{ notice }}</p>
               <p v-else class="muted text-[12px]">共 {{ slides.length }} 页 · 16:9 幻灯片</p>
-              <div class="flex items-center gap-2">
+              <div class="flex flex-wrap items-center gap-2">
                 <button class="btn btn-ghost" :disabled="busy" @click="printPdf">
                   <i class="fa-solid fa-file-pdf" aria-hidden="true"></i>打印 / 另存 PDF
                 </button>
-                <button class="btn btn-primary" :disabled="busy" @click="downloadAll">
+                <button class="btn btn-ghost" :disabled="busy" @click="downloadAll">
+                  <i class="fa-solid fa-image" aria-hidden="true"></i>导出图片
+                </button>
+                <button class="btn btn-primary" :disabled="busy" @click="downloadPptx">
                   <i v-if="busy" class="fa-solid fa-circle-notch" style="animation: spin 0.8s linear infinite" aria-hidden="true"></i>
-                  <i v-else class="fa-solid fa-download" aria-hidden="true"></i>
-                  导出全部图片
+                  <i v-else class="fa-solid fa-file-powerpoint" aria-hidden="true"></i>
+                  导出 PPTX
                 </button>
               </div>
             </footer>
