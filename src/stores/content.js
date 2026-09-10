@@ -899,7 +899,7 @@ export const useContentStore = defineStore('content', () => {
   function addTodo(planId, payload) {
     return remoteWrite(planId, 'todos', 'todos', {
       id: uid('todo'), plan_id: planId, title: '', done: false, due: null,
-      day: null, assignee: null, ...payload
+      day: null, assignee: null, assignees: [], ...payload
     })
   }
 
@@ -913,7 +913,13 @@ export const useContentStore = defineStore('content', () => {
 
   /** 指派负责人(分工):p = {id,name} | null 清除 */
   function setTodoAssignee(planId, id, p) {
-    return remoteUpdate(planId, 'todos', 'todos', id, { assignee: p })
+    return remoteUpdate(planId, 'todos', 'todos', id, { assignee: p, assignees: p ? [p] : [] })
+  }
+
+  /** 指派多名负责人(可多选);assignee 保留首位以兼容旧逻辑 */
+  function setTodoAssignees(planId, id, list) {
+    const arr = Array.isArray(list) ? list : []
+    return remoteUpdate(planId, 'todos', 'todos', id, { assignees: arr, assignee: arr[0] || null })
   }
 
   /** 设置/清除某天的待办归属(day: 1..N | null) */
@@ -1505,6 +1511,7 @@ export const useContentStore = defineStore('content', () => {
     setTodoDone,
     setTodoDue,
     setTodoAssignee,
+    setTodoAssignees,
     setTodoDay,
     removeTodo,
     addGuide,

@@ -97,6 +97,7 @@ create table if not exists public.todos (
   created_at timestamptz not null default now()
 );
 alter table public.todos add column if not exists assignee jsonb;
+alter table public.todos add column if not exists assignees jsonb not null default '[]'::jsonb; -- 多选指派人 [{id,name}]
 alter table public.todos add column if not exists day smallint;
 
 -- 收藏攻略

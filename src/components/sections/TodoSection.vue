@@ -30,21 +30,38 @@ const showAdd = ref(false)
 const newDue = ref('')
 const pickDueFor = ref(null) // 正在内联设置截止日期的任务 id
 const assignFor = ref(null) // 正在指派负责人的任务 id
-
-const participants = computed(() => (props.plan.members || []).slice())
-const me = computed(() => auth.user || {})
+const newDay = ref(null)
+const newAssignees = ref([])
 
 /* Day 归属(第 N 天 = 出发日偏移 N-1) */
 const plannedDates = computed(() =>
   props.plan.start_date && props.plan.end_date ? eachDayISO(props.plan.start_date, props.plan.end_date) : []
 )
 const filterDay = ref(null) // null=全部,0=未定,N=第 N 天
-const newDay = ref(null)
+
+const participants = computed(() => (props.plan.members || []).slice())
+const me = computed(() => auth.user || {})
+
+/** 任务的指派人列表(兼容旧的单 assignee) */
+function assigneesOf(t) {
+  if (Array.isArray(t.assignees) && t.assignees.length) return t.assignees
+  return t.assignee ? [t.assignee] : []
+}
 
 /** 判断某任务是否属于我(按 id 或昵称) */
-const isMine = (t) => {
-  const a = t.assignee
-  return a && (a.id === me.value.id || a.name === me.value.name)
+const isMine = (t) =>
+  assigneesOf(t).some((a) => a && (a.id === me.value.id || a.name === me.value.name))
+
+/** 多选指派 */
+function toggleAssignee(t, p) {
+  const list = assigneesOf(t).slice()
+  const i = list.findIndex((a) => a.id === p.id)
+  if (i === -1) list.push({ id: p.id, name: p.name })
+  else list.splice(i, 1)
+  store.setTodoAssignees(props.plan.id, t.id, list)
+}
+function clearAssignees(t) {
+  store.setTodoAssignees(props.plan.id, t.id, [])
 }
 
 const filtered = computed(() => {
@@ -72,7 +89,13 @@ async function add() {
   if (!title || saving.value) return
   saving.value = true
   try {
-    await store.addTodo(props.plan.id, { title, due: newDue.value || null, day: newDay.value })
+    await store.addTodo(props.plan.id, {
+      title,
+      due: newDue.value || null,
+      day: newDay.value,
+      assignees: newAssignees.value,
+      assignee: newAssignees.value[0] || null
+    })
     toast('任务已添加')
     showAdd.value = false
   } finally {
@@ -80,10 +103,17 @@ async function add() {
   }
 }
 
+function toggleNewAssignee(p) {
+  const i = newAssignees.value.findIndex((a) => a.id === p.id)
+  if (i === -1) newAssignees.value.push({ id: p.id, name: p.name })
+  else newAssignees.value.splice(i, 1)
+}
+
 function openAdd() {
   newTitle.value = ''
   newDue.value = ''
   newDay.value = null
+  newAssignees.value = []
   showAdd.value = true
 }
 
@@ -193,26 +223,27 @@ function countOf(key) {
               {{ t.title }}
             </span>
 
-            <!-- 负责人指派(分工):展开选择参与者 -->
+            <!-- 负责人指派(分工):展开多选参与者 -->
             <template v-if="canEdit && assignFor === t.id">
               <div class="flex w-full flex-wrap items-center gap-1.5 pb-0.5 pl-[46px]">
-                <span class="muted text-[11.5px]">指派给:</span>
+                <span class="muted text-[11.5px]">指派给(可多选):</span>
                 <button
                   v-for="p in participants"
                   :key="p.id"
                   type="button"
                   class="chip transition-all duration-150 active:scale-95"
-                  :class="t.assignee?.id === p.id ? 'chip-brand' : 'chip-plain opacity-70'"
-                  @click="store.setTodoAssignee(plan.id, t.id, t.assignee?.id === p.id ? null : { id: p.id, name: p.name }); assignFor = null"
+                  :class="assigneesOf(t).some((a) => a.id === p.id) ? 'chip-brand' : 'chip-plain opacity-70'"
+                  @click="toggleAssignee(t, p)"
                 >
+                  <i v-if="assigneesOf(t).some((a) => a.id === p.id)" class="fa-solid fa-check text-[10px]" aria-hidden="true"></i>
                   <Avatar :name="p.name" :size="18" :ring="false" :color="p.color" :seed="p.id" />{{ p.name }}
                 </button>
                 <button
-                  v-if="t.assignee"
+                  v-if="assigneesOf(t).length"
                   class="chip chip-rose cursor-pointer !text-[11px]"
-                  @click="store.setTodoAssignee(plan.id, t.id, null); assignFor = null"
+                  @click="clearAssignees(t)"
                 >
-                  <i class="fa-solid fa-xmark" aria-hidden="true"></i>取消指派
+                  <i class="fa-solid fa-xmark" aria-hidden="true"></i>清空
                 </button>
                 <button class="chip chip-plain cursor-pointer !text-[11px]" @click="assignFor = null">完成</button>
               </div>
@@ -221,13 +252,26 @@ function countOf(key) {
               v-else
               type="button"
               class="chip shrink-0 transition-all duration-150 active:scale-95"
-              :class="t.assignee ? 'chip-brand' : 'chip-plain'"
-              :title="canEdit ? '点击指派负责人' : '负责人'"
+              :class="assigneesOf(t).length ? 'chip-brand' : 'chip-plain'"
+              :title="canEdit ? '点击指派负责人(可多选)' : '负责人'"
               @click="canEdit ? (assignFor = t.id) : null"
             >
-                      <Avatar v-if="t.assignee" :name="t.assignee.name" :size="18" :ring="false" :color="memberOf(plan, t.assignee)?.color" :seed="t.assignee.id || t.assignee.name" />
-              <i v-else class="fa-solid fa-user-plus text-[11px]" aria-hidden="true"></i>
-              {{ t.assignee?.name || (canEdit ? '指派' : '未指派') }}
+              <template v-if="assigneesOf(t).length">
+                <Avatar
+                  v-for="a in assigneesOf(t).slice(0, 3)"
+                  :key="a.id || a.name"
+                  :name="a.name"
+                  :size="18"
+                  :ring="false"
+                  :color="memberOf(plan, a)?.color"
+                  :seed="a.id || a.name"
+                />
+                <span class="max-w-[130px] truncate">{{ assigneesOf(t).map((a) => a.name).join('、') }}</span>
+              </template>
+              <template v-else>
+                <i class="fa-solid fa-user-plus text-[11px]" aria-hidden="true"></i>
+                {{ canEdit ? '指派' : '未指派' }}
+              </template>
             </button>
 
             <!-- Day 归属 -->
@@ -314,6 +358,22 @@ function countOf(key) {
               :class="newDay === i + 1 ? 'chip-brand' : 'chip-plain'"
               @click="newDay = i + 1"
             >Day {{ i + 1 }} · {{ fmtDay(d, false) }}</button>
+          </div>
+        </div>
+        <div>
+          <label class="flabel">指派给(可多选,可选)</label>
+          <div class="flex flex-wrap gap-2">
+            <button
+              v-for="p in participants"
+              :key="p.id"
+              type="button"
+              class="chip transition-all duration-150 active:scale-95"
+              :class="newAssignees.some((a) => a.id === p.id) ? 'chip-brand' : 'chip-plain opacity-70'"
+              @click="toggleNewAssignee(p)"
+            >
+              <i v-if="newAssignees.some((a) => a.id === p.id)" class="fa-solid fa-check text-[10px]" aria-hidden="true"></i>
+              <Avatar :name="p.name" :size="18" :ring="false" :color="p.color" :seed="p.id" />{{ p.name }}
+            </button>
           </div>
         </div>
         <div>
