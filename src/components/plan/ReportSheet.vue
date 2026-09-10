@@ -200,8 +200,8 @@ function copySummary() {
         <p v-else class="muted text-[12px]">还没有分账记录</p>
       </div>
 
-      <p v-if="reminders.filter((r) => !r.read && relKey(r.date) !== 'earlier').length" class="muted text-[11.5px]">
-        还有 {{ reminders.filter((r) => !r.read && relKey(r.date) !== 'earlier').length }} 条未读提醒,建议先处理完再散伙~
+      <p v-if="reminders.filter((r) => !content.reminderClosed(r) && relKey(r.date) !== 'earlier').length" class="muted text-[11.5px]">
+        还有 {{ reminders.filter((r) => !content.reminderClosed(r) && relKey(r.date) !== 'earlier').length }} 条未读提醒,建议先处理完再散伙~
       </p>
     </div>
 

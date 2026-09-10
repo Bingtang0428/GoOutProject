@@ -224,7 +224,11 @@
   line-height: 1.5;
   letter-spacing: 0.01em;
 }
-.chip-brand   { background: rgb(var(--c-primary) / 0.1); color: rgb(var(--c-primary-deep)); }
+.chip-brand   {
+  background: rgb(var(--c-primary));
+  color: rgb(var(--c-bg));
+  box-shadow: 0 2px 10px rgb(var(--c-primary) / 0.3);
+}
 .chip-amber   { background: rgb(var(--c-amber) / 0.16); color: var(--amber-text); }
 .chip-rose    { background: rgb(var(--c-rose) / 0.13); color: rgb(var(--c-rose)); }
 .chip-success { background: rgb(34 197 94 / 0.13); color: #16a34a; }

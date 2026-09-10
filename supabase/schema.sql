@@ -121,6 +121,9 @@ create table if not exists public.reminders (
   read       boolean not null default false,
   created_at timestamptz not null default now()
 );
+-- 定向提醒:targets=需要已读的人 [{id,name}];reads=已读记录 [{id,name,at}]
+alter table public.reminders add column if not exists targets jsonb not null default '[]'::jsonb;
+alter table public.reminders add column if not exists reads jsonb not null default '[]'::jsonb;
 
 -- 分账(bill):与食宿(stays)/行程目的地联动,快照支付人与分摊人
 create table if not exists public.bills (

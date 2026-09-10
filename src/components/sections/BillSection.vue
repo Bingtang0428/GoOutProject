@@ -431,7 +431,7 @@ function linkChip(b) {
             :key="c.key"
             type="button"
             class="flex flex-col items-center gap-1.5 rounded-[12px] border py-3 text-[12px] font-semibold transition-all duration-200 ease-out active:scale-95"
-            :class="form.category === c.key ? 'border-primary bg-primary/10 text-primary' : 'border-line text-muted hover:border-primary/40'"
+            :class="form.category === c.key ? 'border-primary bg-primary text-white shadow-[0_2px_10px_rgb(183_89_115/0.3)]' : 'border-line text-muted hover:border-primary/40'"
             @click="form.category = c.key"
           >
             <i :class="`fa-solid ${c.icon}`" class="text-[15px]" aria-hidden="true"></i>

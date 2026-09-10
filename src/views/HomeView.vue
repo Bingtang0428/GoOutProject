@@ -98,7 +98,7 @@ const board = computed(() => {
       return (a.created_at || '').localeCompare(b.created_at || '')
     })[0]
 
-  const todayUnread = reminders.filter((r) => !r.read && relKey(r.date) === 'today').length
+  const todayUnread = reminders.filter((r) => !contentStore.reminderClosed(r) && relKey(r.date) === 'today').length
 
   return {
     plan: p,

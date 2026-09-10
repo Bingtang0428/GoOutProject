@@ -124,7 +124,7 @@ const stats = computed(() => {
     bills: contentStore.rowsOf(id, 'bills').length,
     todoOpen: todos.filter((t) => !t.done).length,
     todoPct: todos.length ? Math.round((todos.filter((t) => t.done).length / todos.length) * 100) : 0,
-    unread: reminders.filter((r) => !r.read && relKey(r.date) !== 'earlier').length
+    unread: reminders.filter((r) => !contentStore.reminderClosed(r) && relKey(r.date) !== 'earlier').length
   }
 })
 

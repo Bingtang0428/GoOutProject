@@ -567,19 +567,7 @@ export const useContentStore = defineStore('content', () => {
     await remoteUpdate(planId, 'stays', 'stays', id, patch)
     const row = (rows[planId]?.stays || []).find((s) => s.id === id)
     if (row?.chosen && typeof row.latitude === 'number' && typeof row.longitude === 'number') {
-      const dates = new Set()
-      for (const n of stayDays(row)) {
-        const date = dayDateByNum(planId, n)
-        if (date) {
-          dates.add(date)
-          await applyStayToDay(planId, date, row)
-        }
-      }
-      for (const anyDay of rows[planId]?.days || []) {
-        if (!dates.has(anyDay.date) && (anyDay.destinations || []).some((d) => d.stay_link === id)) {
-          await persistDayDests(planId, anyDay.date, (anyDay.destinations || []).filter((d) => d.stay_link !== id))
-        }
-      }
+      await syncStayToRoute(planId, row)
     }
   }
 
@@ -682,10 +670,13 @@ export const useContentStore = defineStore('content', () => {
   }
 
   /**
-   * 把选定的酒店写入某天路线:酒店作为该天的「起点」与「终点」;
+   * 把选定的酒店写入某天路线:
+   *  - 入住当天(首日):只作「终点」,不作起点
+   *  - 退房当天(末日):只作「起点」,不作终点
+   *  - 中间几天:既是起点也是终点
    * 餐厅则只插入一次(不设起终点)。已存在的同店条目先清除,避免重复。
    */
-  async function applyStayToDay(planId, date, row) {
+  async function applyStayToDay(planId, date, row, { asStart = false, asEnd = false } = {}) {
     const day = findDay(planId, date)
     if (!day) return
     const others = (day.destinations || []).filter((d) => d.stay_link !== row.id)
@@ -698,17 +689,44 @@ export const useContentStore = defineStore('content', () => {
     }
     let dests
     if (row.type === 'stay') {
-      dests = others.length
-        ? [
-            { id: uid('dst'), time: '', ...meta, stay_role: 'start' },
-            ...others,
-            { id: uid('dst'), time: '', ...meta, stay_role: 'end' }
-          ]
-        : [{ id: uid('dst'), time: '', ...meta, stay_role: 'start' }]
+      if (!others.length) {
+        // 当天只有这一家酒店:单条展示(按退房/入住语义标终点或起点)
+        const role = asEnd ? 'end' : asStart ? 'start' : null
+        dests = [{ id: uid('dst'), time: '', ...meta, ...(role ? { stay_role: role } : {}) }]
+      } else {
+        const list = [...others]
+        if (asEnd) list.push({ id: uid('dst'), time: '', ...meta, stay_role: 'end' })
+        if (asStart) list.unshift({ id: uid('dst'), time: '', ...meta, stay_role: 'start' })
+        dests = list
+      }
     } else {
       dests = [...others, { id: uid('dst'), time: '', ...meta }]
     }
     await persistDayDests(planId, date, dests)
+  }
+
+  /**
+   * 把某家已选定的酒店按起终点规则同步进它所有的日期,并清理不在日期范围内的旧同步。
+   */
+  async function syncStayToRoute(planId, row) {
+    const dayNums = stayDays(row)
+    const dates = new Set()
+    for (let i = 0; i < dayNums.length; i++) {
+      const date = dayDateByNum(planId, dayNums[i])
+      if (!date) continue
+      dates.add(date)
+      const asStart = i > 0
+      const asEnd = i < dayNums.length - 1 || dayNums.length === 1
+      await applyStayToDay(planId, date, row, { asStart, asEnd })
+    }
+    for (const anyDay of rows[planId]?.days || []) {
+      if (dates.has(anyDay.date)) continue
+      const gone = (anyDay.destinations || []).filter((d) => d.stay_link === row.id)
+      if (gone.length) {
+        await persistDayDests(planId, anyDay.date, (anyDay.destinations || []).filter((d) => d.stay_link !== row.id))
+        await dropDestComments(planId, anyDay.date, gone.map((d) => d.id))
+      }
+    }
   }
 
   /**
@@ -737,23 +755,8 @@ export const useContentStore = defineStore('content', () => {
         }
       }
       await remoteUpdate(planId, 'stays', 'stays', id, { chosen: true, chosen_by: actor || null })
-      // 写入所选每一天(酒店=起点+终点)
-      const chosenDates = new Set()
-      for (const n of dayNums) {
-        const date = dayDateByNum(planId, n)
-        if (!date) continue
-        chosenDates.add(date)
-        await applyStayToDay(planId, date, row)
-      }
-      // 清理不在所选日期内的旧同步(如改过归属日)
-      for (const anyDay of rows[planId]?.days || []) {
-        if (chosenDates.has(anyDay.date)) continue
-        const gone = (anyDay.destinations || []).filter((d) => d.stay_link === id)
-        if (gone.length) {
-          await persistDayDests(planId, anyDay.date, (anyDay.destinations || []).filter((d) => d.stay_link !== id))
-          await dropDestComments(planId, anyDay.date, gone.map((d) => d.id))
-        }
-      }
+      // 按入住/退房规则写入所选每一天(酒店=起点/终点)
+      await syncStayToRoute(planId, row)
       return { ok: true }
     }
     // 取消选定:从所有日期移除
@@ -807,12 +810,43 @@ export const useContentStore = defineStore('content', () => {
 
   function addReminder(planId, payload) {
     return remoteWrite(planId, 'reminders', 'reminders', {
-      id: uid('rm'), plan_id: planId, title: '', date: '', time: '09:00', read: false, ...payload
+      id: uid('rm'), plan_id: planId, title: '', date: '', time: '09:00',
+      read: false, targets: [], reads: [], ...payload
     })
   }
 
   function setReminderRead(planId, id, read) {
     return remoteUpdate(planId, 'reminders', 'reminders', id, { read })
+  }
+
+  /** 某成员标记已读:记入 reads;当所有指定成员都读过(或无指定成员)时整条关闭 */
+  async function readReminderBy(planId, id, person) {
+    const row = (rows[planId]?.reminders || []).find((r) => r.id === id)
+    if (!row || !person?.name) return
+    const reads = [...(row.reads || [])]
+    const already = reads.some((r) => (person.id && r.id === person.id) || (!person.id && r.name === person.name))
+    if (!already) reads.push({ id: person.id || null, name: person.name, at: new Date().toISOString() })
+    const targets = row.targets || []
+    const allRead = targets.length
+      ? targets.every((t) => reads.some((r) => (t.id && r.id === t.id) || r.name === t.name))
+      : true
+    await remoteUpdate(planId, 'reminders', 'reminders', id, { reads, read: allRead })
+  }
+
+  /** 该成员是否已读 */
+  function reminderReadBy(row, person) {
+    if (!row || !person?.name) return false
+    return (row.reads || []).some((r) => (person.id && r.id === person.id) || (!person.id && r.name === person.name))
+  }
+
+  /** 整条提醒是否已关闭:指定多人时需全部已读;否则任意已读即关闭 */
+  function reminderClosed(row) {
+    if (!row) return false
+    if (row.read) return true
+    const targets = row.targets || []
+    if (!targets.length) return false
+    const reads = row.reads || []
+    return targets.every((t) => reads.some((x) => (t.id && x.id === t.id) || x.name === t.name))
   }
 
   function removeReminder(planId, id) {
@@ -888,7 +922,7 @@ export const useContentStore = defineStore('content', () => {
       const out = []
       for (const p of plansArr) {
         for (const r of localDb.loadContent(p.id, 'reminders')) {
-          if (!r.read && r.date >= today) out.push({ ...r, plan_name: p.name })
+          if (!reminderClosed(r) && r.date >= today) out.push({ ...r, plan_name: p.name })
         }
       }
       return out.sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time)).slice(0, max)
@@ -902,7 +936,7 @@ export const useContentStore = defineStore('content', () => {
       .order('time', { ascending: true })
       .limit(30)
     if (error) return []
-    const list = (data || []).filter((r) => !r.read).slice(0, max)
+    const list = (data || []).filter((r) => !reminderClosed(r)).slice(0, max)
     return list.map((r) => ({ ...r, plan_name: nameOf(r.plan_id) }))
   }
 
@@ -1329,6 +1363,9 @@ export const useContentStore = defineStore('content', () => {
     removeGuide,
     addReminder,
     setReminderRead,
+    readReminderBy,
+    reminderReadBy,
+    reminderClosed,
     removeReminder,
     addBill,
     updateBill,
