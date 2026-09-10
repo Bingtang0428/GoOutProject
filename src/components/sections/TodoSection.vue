@@ -84,19 +84,23 @@ const doneCount = computed(() => todos.value.filter((t) => t.done).length)
 const pct = computed(() => (todos.value.length ? Math.round((doneCount.value / todos.value.length) * 100) : 0))
 
 const saving = ref(false)
-async function add() {
+const editingId = ref(null) // null=新增,否则编辑中的任务 id
+
+async function save() {
   const title = newTitle.value.trim()
   if (!title || saving.value) return
   saving.value = true
   try {
-    await store.addTodo(props.plan.id, {
+    const payload = {
       title,
       due: newDue.value || null,
       day: newDay.value,
       assignees: newAssignees.value,
       assignee: newAssignees.value[0] || null
-    })
-    toast('任务已添加')
+    }
+    if (editingId.value) await store.updateTodo(props.plan.id, editingId.value, payload)
+    else await store.addTodo(props.plan.id, payload)
+    toast(editingId.value ? '任务已更新' : '任务已添加')
     showAdd.value = false
   } finally {
     saving.value = false
@@ -110,10 +114,20 @@ function toggleNewAssignee(p) {
 }
 
 function openAdd() {
+  editingId.value = null
   newTitle.value = ''
   newDue.value = ''
   newDay.value = null
   newAssignees.value = []
+  showAdd.value = true
+}
+
+function openEdit(t) {
+  editingId.value = t.id
+  newTitle.value = t.title || ''
+  newDue.value = t.due || ''
+  newDay.value = t.day ?? null
+  newAssignees.value = assigneesOf(t).slice()
   showAdd.value = true
 }
 
@@ -216,12 +230,16 @@ function countOf(key) {
               :disabled="!canEdit"
               @update:model-value="(v) => store.setTodoDone(plan.id, t.id, v)"
             />
-            <span
-              class="min-w-0 flex-1 text-[14.5px] transition-all duration-300 ease-out"
-              :class="t.done ? 'font-normal text-muted/80 line-through decoration-muted/60' : 'font-medium text-ink'"
+            <button
+              type="button"
+              class="min-w-0 flex-1 text-left text-[14.5px] transition-all duration-300 ease-out"
+              :class="[t.done ? 'font-normal text-muted/80 line-through decoration-muted/60' : 'font-medium text-ink', canEdit ? 'hover:text-primary' : '']"
+              :disabled="!canEdit"
+              :title="canEdit ? '点击编辑任务' : ''"
+              @click="openEdit(t)"
             >
               {{ t.title }}
-            </span>
+            </button>
 
             <!-- 负责人指派(分工):展开多选参与者 -->
             <template v-if="canEdit && assignFor === t.id">
@@ -311,6 +329,9 @@ function countOf(key) {
               <span class="dot"></span>{{ dueText(t.due) }}
             </span>
 
+            <button v-if="canEdit" class="icon-btn" title="编辑任务" @click="openEdit(t)">
+              <i class="fa-solid fa-pen" aria-hidden="true"></i>
+            </button>
             <button v-if="canEdit" class="icon-btn icon-btn-danger" title="删除任务" @click="store.removeTodo(plan.id, t.id)">
               <i class="fa-solid fa-trash-can" aria-hidden="true"></i>
             </button>
@@ -328,8 +349,8 @@ function countOf(key) {
       </EmptyState>
     </div>
 
-    <!-- 快速添加弹窗 -->
-    <BaseModal v-model="showAdd" title="添加任务" :max-width="'440px'">
+    <!-- 添加 / 编辑任务弹窗 -->
+    <BaseModal v-model="showAdd" :title="editingId ? '编辑任务' : '添加任务'" :max-width="'440px'">
       <div class="space-y-4">
         <div>
           <label class="flabel">任务内容 *</label>
@@ -338,7 +359,7 @@ function countOf(key) {
             class="field"
             placeholder="例如:预订黄山风景区门票"
             maxlength="60"
-            @keyup.enter="add"
+            @keyup.enter="save"
           />
         </div>
         <div>
@@ -383,7 +404,9 @@ function countOf(key) {
       </div>
       <template #footer>
         <BaseButton variant="ghost" @click="showAdd = false">取消</BaseButton>
-        <BaseButton icon="fa-plus" :disabled="!newTitle.trim()" @click="add">添加</BaseButton>
+        <BaseButton :icon="editingId ? 'fa-check' : 'fa-plus'" :disabled="!newTitle.trim()" :loading="saving" @click="save">
+          {{ editingId ? '保存' : '添加' }}
+        </BaseButton>
       </template>
     </BaseModal>
   </section>

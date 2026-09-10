@@ -907,6 +907,11 @@ export const useContentStore = defineStore('content', () => {
     return remoteUpdate(planId, 'todos', 'todos', id, { done })
   }
 
+  /** 编辑任务信息(标题/归属日/截止/指派人等) */
+  function updateTodo(planId, id, patch) {
+    return remoteUpdate(planId, 'todos', 'todos', id, patch)
+  }
+
   function setTodoDue(planId, id, due) {
     return remoteUpdate(planId, 'todos', 'todos', id, { due })
   }
@@ -1509,6 +1514,7 @@ export const useContentStore = defineStore('content', () => {
     chooseStay,
     addTodo,
     setTodoDone,
+    updateTodo,
     setTodoDue,
     setTodoAssignee,
     setTodoAssignees,
