@@ -47,6 +47,26 @@ function assigneesOf(t) {
   if (Array.isArray(t.assignees) && t.assignees.length) return t.assignees
   return t.assignee ? [t.assignee] : []
 }
+const samePerson = (a, b) => a && b && ((a.id && b.id && a.id === b.id) || (a.name && a.name === b.name))
+const completionsOf = (t) => (Array.isArray(t.completions) ? t.completions : [])
+
+/** 整体是否完成:多人指派时需全部完成 */
+function isDone(t) {
+  const list = assigneesOf(t)
+  if (list.length <= 1) return !!t.done
+  return list.every((a) => completionsOf(t).some((c) => samePerson(a, c)))
+}
+/** 我是否已完成(复选框状态) */
+function myDone(t) {
+  const list = assigneesOf(t)
+  if (list.length <= 1) return !!t.done
+  return completionsOf(t).some((c) => samePerson(c, me.value))
+}
+/** 我是否可以勾选(多人时仅指派人可勾) */
+function myCanCheck(t) {
+  const list = assigneesOf(t)
+  return props.canEdit && (list.length <= 1 || list.some((a) => samePerson(a, me.value)))
+}
 
 /** 判断某任务是否属于我(按 id 或昵称) */
 const isMine = (t) =>
@@ -70,8 +90,8 @@ const filtered = computed(() => {
     if (!!a.done !== !!b.done) return a.done ? 1 : -1
     return 0
   })
-  if (filter.value === 'open') return list.filter((t) => !t.done)
-  if (filter.value === 'done') return list.filter((t) => t.done)
+  if (filter.value === 'open') return list.filter((t) => !isDone(t))
+  if (filter.value === 'done') return list.filter((t) => isDone(t))
   if (filter.value === 'mine') return list.filter((t) => isMine(t))
   if (filterDay.value !== null) {
     if (filterDay.value === 0) return list.filter((t) => !t.day)
@@ -80,7 +100,7 @@ const filtered = computed(() => {
   return list
 })
 
-const doneCount = computed(() => todos.value.filter((t) => t.done).length)
+const doneCount = computed(() => todos.value.filter((t) => isDone(t)).length)
 const pct = computed(() => (todos.value.length ? Math.round((doneCount.value / todos.value.length) * 100) : 0))
 
 const saving = ref(false)
@@ -160,7 +180,7 @@ const FILTERS = [
 ]
 
 function countOf(key) {
-  if (key === 'open') return todos.value.filter((t) => !t.done).length
+  if (key === 'open') return todos.value.filter((t) => !isDone(t)).length
   if (key === 'done') return doneCount.value
   if (key === 'mine') return todos.value.filter((t) => isMine(t)).length
   return todos.value.length
@@ -226,20 +246,29 @@ function countOf(key) {
             class="card flex flex-wrap items-center gap-x-4 gap-y-2 px-5 py-3.5 transition-all duration-280 ease-out hover:shadow-card-hover active:scale-[0.985]"
           >
             <BaseCheckbox
-              :model-value="t.done"
-              :disabled="!canEdit"
-              @update:model-value="(v) => store.setTodoDone(plan.id, t.id, v)"
+              :model-value="myDone(t)"
+              :disabled="!myCanCheck(t)"
+              :title="myCanCheck(t) ? '' : '仅指派人可勾选完成'"
+              @update:model-value="() => store.toggleTodo(plan.id, t.id, me)"
             />
             <button
               type="button"
               class="min-w-0 flex-1 text-left text-[14.5px] transition-all duration-300 ease-out"
-              :class="[t.done ? 'font-normal text-muted/80 line-through decoration-muted/60' : 'font-medium text-ink', canEdit ? 'hover:text-primary' : '']"
+              :class="[isDone(t) ? 'font-normal text-muted/80 line-through decoration-muted/60' : 'font-medium text-ink', canEdit ? 'hover:text-primary' : '']"
               :disabled="!canEdit"
               :title="canEdit ? '点击编辑任务' : ''"
               @click="openEdit(t)"
             >
               {{ t.title }}
             </button>
+            <span
+              v-if="assigneesOf(t).length > 1"
+              class="chip shrink-0 !px-2 !py-0 !text-[11px]"
+              :class="isDone(t) ? 'chip-success' : 'chip-plain'"
+              :title="`已完成 ${completionsOf(t).length}/${assigneesOf(t).length} 人`"
+            >
+              <i class="fa-solid fa-users text-[10px]" aria-hidden="true"></i>{{ completionsOf(t).length }}/{{ assigneesOf(t).length }}
+            </span>
 
             <!-- 负责人指派(分工):展开多选参与者 -->
             <template v-if="canEdit && assignFor === t.id">
@@ -363,7 +392,7 @@ function countOf(key) {
           />
         </div>
         <div>
-          <label class="flabel">安排在哪一天</label>
+          <label class="flabel">关联到哪一天(这条任务发生在哪天)</label>
           <div class="flex flex-wrap gap-2">
             <button
               type="button"
@@ -380,6 +409,9 @@ function countOf(key) {
               @click="newDay = i + 1"
             >Day {{ i + 1 }} · {{ fmtDay(d, false) }}</button>
           </div>
+          <p class="muted mt-1 text-[11.5px]">
+            <i class="fa-solid fa-circle-info mr-1" aria-hidden="true"></i>用于「今日视图」与当天行程里显示这条待办
+          </p>
         </div>
         <div>
           <label class="flabel">指派给(可多选,可选)</label>
@@ -396,9 +428,12 @@ function countOf(key) {
               <Avatar :name="p.name" :size="18" :ring="false" :color="p.color" :seed="p.id" />{{ p.name }}
             </button>
           </div>
+          <p class="muted mt-1 text-[11.5px]">
+            <i class="fa-solid fa-circle-info mr-1" aria-hidden="true"></i>指派多人时,需所有人都勾选完成,任务才算完成
+          </p>
         </div>
         <div>
-          <label class="flabel">截止日期(可选)</label>
+          <label class="flabel">截止日期(需在此前完成,可选)</label>
           <input v-model="newDue" type="date" class="field" />
         </div>
       </div>

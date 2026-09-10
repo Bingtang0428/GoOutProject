@@ -899,12 +899,34 @@ export const useContentStore = defineStore('content', () => {
   function addTodo(planId, payload) {
     return remoteWrite(planId, 'todos', 'todos', {
       id: uid('todo'), plan_id: planId, title: '', done: false, due: null,
-      day: null, assignee: null, assignees: [], ...payload
+      day: null, assignee: null, assignees: [], completions: [], ...payload
     })
   }
 
   function setTodoDone(planId, id, done) {
     return remoteUpdate(planId, 'todos', 'todos', id, { done })
+  }
+
+  /**
+   * 勾选/取消勾选任务:
+   *  - 无指派或单人指派 → 直接切换整体完成
+   *  - 多人指派 → 记录「谁已完成」,所有人完成时整体 done 才为 true
+   */
+  async function toggleTodo(planId, id, person) {
+    const t = (rows[planId]?.todos || []).find((x) => x.id === id)
+    if (!t) return
+    const list = Array.isArray(t.assignees) && t.assignees.length ? t.assignees : t.assignee ? [t.assignee] : []
+    const same = (a, b) => a && b && ((a.id && b.id && a.id === b.id) || (a.name && a.name === b.name))
+    if (list.length <= 1) {
+      await remoteUpdate(planId, 'todos', 'todos', id, { done: !t.done })
+      return
+    }
+    const comps = Array.isArray(t.completions) ? [...t.completions] : []
+    const i = comps.findIndex((c) => same(c, person))
+    if (i === -1) comps.push({ id: person.id || null, name: person.name, at: new Date().toISOString() })
+    else comps.splice(i, 1)
+    const allDone = list.every((a) => comps.some((c) => same(a, c)))
+    await remoteUpdate(planId, 'todos', 'todos', id, { completions: comps, done: allDone })
   }
 
   /** 编辑任务信息(标题/归属日/截止/指派人等) */
@@ -1514,6 +1536,7 @@ export const useContentStore = defineStore('content', () => {
     chooseStay,
     addTodo,
     setTodoDone,
+    toggleTodo,
     updateTodo,
     setTodoDue,
     setTodoAssignee,

@@ -98,6 +98,7 @@ create table if not exists public.todos (
 );
 alter table public.todos add column if not exists assignee jsonb;
 alter table public.todos add column if not exists assignees jsonb not null default '[]'::jsonb; -- 多选指派人 [{id,name}]
+alter table public.todos add column if not exists completions jsonb not null default '[]'::jsonb; -- 多人完成记录 [{id,name,at}]
 alter table public.todos add column if not exists day smallint;
 
 -- 收藏攻略

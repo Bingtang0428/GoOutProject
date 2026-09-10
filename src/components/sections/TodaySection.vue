@@ -7,6 +7,7 @@
 // ============================================================
 import { ref, computed } from 'vue'
 import { useContentStore } from '@/stores/content'
+import { useAuthStore } from '@/stores/auth'
 import { fmtDay, todayISO } from '@/utils/date'
 import { navUrl } from '@/api/geocode'
 import BaseButton from '@/components/ui/BaseButton.vue'
@@ -19,6 +20,8 @@ const props = defineProps({
   canEdit: { type: Boolean, default: true }
 })
 const store = useContentStore()
+const auth = useAuthStore()
+const me = computed(() => ({ id: auth.user?.id || null, name: auth.user?.name || '' }))
 
 const days = computed(() =>
   store.rowsOf(props.plan.id, 'days').slice().sort((a, b) => a.date.localeCompare(b.date))
@@ -95,9 +98,21 @@ function navTo(x) {
 /* 出行模式全屏 */
 const travel = ref(false)
 
+const samePerson = (a, b) => a && b && ((a.id && b.id && a.id === b.id) || (a.name && a.name === b.name))
+function assigneesOf(t) {
+  if (Array.isArray(t.assignees) && t.assignees.length) return t.assignees
+  return t.assignee ? [t.assignee] : []
+}
+/** 我是否已完成(多人指派时按人) */
+function myDone(t) {
+  const list = assigneesOf(t)
+  if (list.length <= 1) return !!t.done
+  return (Array.isArray(t.completions) ? t.completions : []).some((c) => samePerson(c, me.value))
+}
+
 async function toggleTodo(t) {
   if (!props.canEdit) return
-  await store.setTodoDone(props.plan.id, t.id, !t.done)
+  await store.toggleTodo(props.plan.id, t.id, me.value)
 }
 async function readReminder(r) {
   if (!props.canEdit) return
@@ -202,13 +217,13 @@ async function readReminder(r) {
               <li v-for="t in dayTodos" :key="t.id" class="flex items-center gap-2">
                 <button
                   class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border transition-all"
-                  :class="t.done ? 'border-primary bg-primary text-white' : 'border-line text-transparent'"
+                  :class="myDone(t) ? 'border-primary bg-primary text-white' : 'border-line text-transparent'"
                   :disabled="!canEdit"
                   @click="toggleTodo(t)"
                 >
                   <i class="fa-solid fa-check text-[10px]" aria-hidden="true"></i>
                 </button>
-                <span class="text-[13px]" :class="t.done ? 'text-muted line-through' : 'text-ink-soft'">{{ t.title }}</span>
+                <span class="text-[13px]" :class="myDone(t) ? 'text-muted line-through' : 'text-ink-soft'">{{ t.title }}</span>
               </li>
             </ul>
           </div>
