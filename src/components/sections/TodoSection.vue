@@ -196,7 +196,11 @@ function countOf(key) {
           待办清单
           <span v-if="todos.length" class="chip chip-brand">{{ pct }}% 完成</span>
         </h2>
-        <p class="muted mt-1">{{ doneCount }} / {{ todos.length }} 项已完成,协作成员的勾选实时同步</p>
+        <p class="muted mt-1">
+          <b class="font-semibold text-ink-soft">任务清单</b>:写清「谁负责做什么」,做完按人勾选完成。
+          到某个时间点要记得 / 需知晓的事,请用「提醒事项」。
+        </p>
+        <p class="muted mt-0.5">{{ doneCount }} / {{ todos.length }} 项已完成,协作成员的勾选实时同步</p>
       </div>
       <BaseButton v-if="canEdit" icon="fa-plus" @click="openAdd()">添加任务</BaseButton>
     </div>
@@ -381,6 +385,10 @@ function countOf(key) {
     <!-- 添加 / 编辑任务弹窗 -->
     <BaseModal v-model="showAdd" :title="editingId ? '编辑任务' : '添加任务'" :max-width="'440px'">
       <div class="space-y-4">
+        <p class="muted -mt-1 text-[12px] leading-relaxed">
+          <i class="fa-solid fa-circle-info mr-1 text-amber" aria-hidden="true"></i>
+          任务 = 需要有人完成的事(可指派多人、按人勾选完成、可关联到某天)
+        </p>
         <div>
           <label class="flabel">任务内容 *</label>
           <input

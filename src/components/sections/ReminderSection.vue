@@ -124,7 +124,10 @@ function groupTone(key) {
             <span class="dot"></span>{{ unreadCount }} 条未读
           </span>
         </h2>
-        <p class="muted mt-1">可指定提醒谁;多人提醒需所有人已读后才关闭</p>
+        <p class="muted mt-1">
+          <b class="font-semibold text-ink-soft">时间提醒</b>:记录「某个时间点要记得 / 需知晓」的事,可指定谁必须已读。
+          需要有人去做并完成的任务,请用「待办清单」。
+        </p>
       </div>
       <div class="flex items-center gap-2">
         <BaseButton v-if="canEdit && unreadCount" variant="ghost" size="sm" @click="markAllMine">
@@ -260,6 +263,10 @@ function groupTone(key) {
     <!-- 添加提醒弹窗 -->
     <BaseModal v-model="showAdd" title="添加提醒" :max-width="'460px'">
       <div class="space-y-4">
+        <p class="muted -mt-1 text-[12px] leading-relaxed">
+          <i class="fa-solid fa-circle-info mr-1 text-amber" aria-hidden="true"></i>
+          提醒 = 到某个时间点要记得 / 需知晓的事(可指定谁必须已读);需要有人去做并完成的,请用「待办清单」
+        </p>
         <div>
           <label class="flabel">提醒内容 *</label>
           <input v-model="form.title" class="field" placeholder="例如:联系民宿确认入住" maxlength="60" @keyup.enter="save" />
