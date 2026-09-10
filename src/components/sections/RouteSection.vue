@@ -10,6 +10,7 @@
 import { ref, reactive, computed, watch, onBeforeUnmount, nextTick } from 'vue'
 import { useContentStore } from '@/stores/content'
 import { useAuthStore } from '@/stores/auth'
+import { usePresenceStore } from '@/stores/presence'
 import { fmtDay, dayIndex, eachDayISO, parseISO } from '@/utils/date'
 import { uid, PASTEL_GRADS } from '@/utils/misc'
 import { geocodePlace, navUrl, wgs2gcj } from '@/api/geocode'
@@ -662,6 +663,8 @@ onBeforeUnmount(() => {
 /* ---------------- 添加 / 校正 目的地 ---------------- */
 const showAdd = ref(false)
 const savingDest = ref(false)
+const presence = usePresenceStore()
+watch(showAdd, (v) => presence.setEditing(v ? 'route' : null))
 const destEdit = ref(null) // {day, dest} | null(null=新增)
 const destForm = reactive({ date: '', geo: null, time: '', note: '', driveMin: '', mode: 'car' })
 
@@ -948,6 +951,9 @@ watch(
           <span v-if="autoRun" class="chip chip-amber">
             <i class="fa-solid fa-circle-notch" style="animation: spin 0.9s linear infinite" aria-hidden="true"></i>
             自动算时长中…
+          </span>
+          <span v-if="presence.editors('route').length" class="chip chip-amber" :title="presence.editors('route').map((e) => e.name).join('、')">
+            <span class="dot"></span>{{ presence.editors('route').map((e) => e.name).join('、') }} 正在编辑
           </span>
         </h2>
         <p class="muted mt-1">每日行程一目了然,打开地图查看整条路线</p>

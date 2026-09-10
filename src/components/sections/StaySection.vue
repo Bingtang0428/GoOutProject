@@ -3,9 +3,10 @@
 // 食宿安排:卡片展示 餐厅/酒店 名称、地址、电话与标签
 // 桌面端两列网格;支持预订状态开关与标签快速编辑
 // ============================================================
-import { ref, computed, reactive } from 'vue'
+import { ref, computed, reactive, watch } from 'vue'
 import { useContentStore } from '@/stores/content'
 import { useAuthStore } from '@/stores/auth'
+import { usePresenceStore } from '@/stores/presence'
 import { eachDayISO, fmtDay } from '@/utils/date'
 import BaseModal from '@/components/ui/BaseModal.vue'
 import Avatar from '@/components/ui/Avatar.vue'
@@ -22,6 +23,7 @@ const props = defineProps({
 })
 const store = useContentStore()
 const auth = useAuthStore()
+const presence = usePresenceStore()
 
 const stays = computed(() => store.rowsOf(props.plan.id, 'stays'))
 const bookedCount = computed(() => stays.value.filter((s) => s.booked).length)
@@ -68,6 +70,7 @@ const groupsForShow = computed(() => {
 const showEdit = ref(false)
 const editingId = ref(null) // null = 新增
 const saving = ref(false)
+watch(showEdit, (v) => presence.setEditing(v ? 'stay' : null))
 const form = reactive({ type: 'stay', name: '', geo: null, phone: '', tags: [], booked: false, tagInput: '', assignee: null, days: [], link: '' })
 
 const participants = computed(() => (props.plan.members || []).slice())
@@ -218,6 +221,9 @@ function tagTone(tag) {
           <span class="chip chip-brand">{{ stays.length }} 家</span>
           <span class="chip chip-success">{{ bookedCount }} 已预订</span>
           <span class="chip chip-amber">{{ foodCount }} 家餐厅</span>
+          <span v-if="presence.editors('stay').length" class="chip chip-amber" :title="presence.editors('stay').map((e) => e.name).join('、')">
+            <span class="dot"></span>{{ presence.editors('stay').map((e) => e.name).join('、') }} 正在编辑
+          </span>
         </h2>
         <p class="muted mt-1">酒店与餐厅分卡片收纳,电话一键拨打</p>
       </div>

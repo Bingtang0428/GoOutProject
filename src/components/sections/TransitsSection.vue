@@ -5,8 +5,9 @@
 //  - 时间为必填(到达=到达当地时刻 / 离开=离开当地时刻)
 //  - 顶部按时间线展示谁先到、谁后到及间隔
 // ============================================================
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, watch } from 'vue'
 import { useContentStore } from '@/stores/content'
+import { usePresenceStore } from '@/stores/presence'
 import { fmtDay } from '@/utils/date'
 import BaseModal from '@/components/ui/BaseModal.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
@@ -20,6 +21,7 @@ const props = defineProps({
   canEdit: { type: Boolean, default: true }
 })
 const store = useContentStore()
+const presence = usePresenceStore()
 
 const transits = computed(() =>
   store.rowsOf(props.plan.id, 'transits').slice().sort((a, b) => (a.leg_date + a.time).localeCompare(b.leg_date + b.time))
@@ -112,6 +114,7 @@ async function createPickup(t) {
 /* ---------- 编辑弹窗 ---------- */
 const showForm = ref(false)
 const saving = ref(false)
+watch(showForm, (v) => presence.setEditing(v ? 'transit' : null))
 const editing = ref(null) // 编辑的 transit | null 新增
 const form = reactive({
   personIds: [], direction: 'in', mode: 'train',
@@ -213,6 +216,9 @@ const DIR_META = {
         <h2 class="title-1 flex flex-wrap items-center gap-3">
           <i class="fa-solid fa-plane-departure text-[19px] text-primary" aria-hidden="true"></i>
           大交通企划
+          <span v-if="presence.editors('transit').length" class="chip chip-amber" :title="presence.editors('transit').map((e) => e.name).join('、')">
+            <span class="dot"></span>{{ presence.editors('transit').map((e) => e.name).join('、') }} 正在编辑
+          </span>
         </h2>
         <p class="muted mt-1">天南地北先到集合点 —— 每个人怎么来、怎么走,一目了然</p>
       </div>

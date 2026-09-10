@@ -1,6 +1,7 @@
 <script setup>
 import { ref, reactive, computed, watch } from 'vue'
 import { PASTEL_GRADS } from '@/utils/misc'
+import { CURRENCIES } from '@/utils/money'
 import { uid } from '@/utils/misc'
 import { todayISO } from '@/utils/date'
 import { useAuthStore } from '@/stores/auth'
@@ -26,6 +27,7 @@ const form = reactive({
   end_date: '',
   gradient: 0,
   budget: '',
+  currency: 'CNY',
   memberName: '',
   members: []
 })
@@ -46,6 +48,7 @@ function reset() {
   form.end_date = p?.end_date || todayISO()
   form.gradient = p?.gradient ?? 0
   form.budget = p?.budget ? String(p.budget) : ''
+  form.currency = p?.currency || 'CNY'
   form.members = p?.members?.map((m) => ({ ...m })) || []
   form.memberName = ''
 }
@@ -89,6 +92,7 @@ async function save() {
       end_date: form.end_date,
       gradient: form.gradient,
       budget: form.budget === '' ? null : Number(form.budget) || 0,
+      currency: form.currency,
       members
     })
     emit('update:modelValue', false)
@@ -121,8 +125,8 @@ async function save() {
         <input v-model="form.destination" class="field" placeholder="例如:安徽 · 黄山 / 宏村" maxlength="30" />
       </div>
 
-      <div class="grid grid-cols-3 gap-4">
-        <div class="col-span-2 grid grid-cols-2 gap-4">
+      <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <div class="grid grid-cols-2 gap-4 sm:col-span-2">
           <div>
             <label class="flabel">出发日期</label>
             <input v-model="form.start_date" type="date" class="field" />
@@ -133,8 +137,13 @@ async function save() {
           </div>
         </div>
         <div>
-          <label class="flabel">总预算 ¥(可选)</label>
-          <input v-model="form.budget" type="number" min="0" class="field" placeholder="6000" />
+          <label class="flabel">总预算(可选)</label>
+          <div class="flex gap-2">
+            <select v-model="form.currency" class="field !w-[8.5rem] shrink-0">
+              <option v-for="c in CURRENCIES" :key="c.code" :value="c.code">{{ c.label }}</option>
+            </select>
+            <input v-model="form.budget" type="number" min="0" class="field flex-1" placeholder="6000" />
+          </div>
         </div>
       </div>
       <p v-if="dateError || dateInvalid" class="flex items-center gap-1.5 text-[12.5px] font-medium text-rose">

@@ -6,9 +6,10 @@
 //  - 下方按人分开展示:垫付(应收)/ 应摊(应付)/ 结余,附简易转账建议
 // Props: plan / canEdit
 // ============================================================
-import { ref, computed, reactive } from 'vue'
+import { ref, computed, reactive, watch } from 'vue'
 import { useContentStore } from '@/stores/content'
 import { usePlansStore } from '@/stores/plans'
+import { usePresenceStore } from '@/stores/presence'
 import BaseModal from '@/components/ui/BaseModal.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseTag from '@/components/ui/BaseTag.vue'
@@ -26,6 +27,7 @@ const props = defineProps({
 })
 const store = useContentStore()
 const plansStore = usePlansStore()
+const presence = usePresenceStore()
 /** 是否已结算归档(锁定,不可再改账单) */
 const settled = computed(() => Boolean(props.plan.settled))
 
@@ -77,6 +79,7 @@ const linkable = computed(() => {
 
 /* ---------------- 新增/编辑 ---------------- */
 const showForm = ref(false)
+watch(showForm, (v) => presence.setEditing(v ? 'bill' : null))
 const editingId = ref(null)
 const saving = ref(false)
 const form = reactive({
@@ -255,6 +258,28 @@ const transferPlan = computed(() => {
 
 const totalAmount = computed(() => bills.value.reduce((s, b) => s + Number(b.amount || 0), 0))
 
+/* 转账确认:记录已完成的转账 */
+const confirmedTransfers = computed(() =>
+  Array.isArray(props.plan.settled_transfers) ? props.plan.settled_transfers : []
+)
+const tKey = (t) => `${t.from}|${t.to}|${Math.round(Number(t.amount) || 0)}`
+const isTransferConfirmed = (t) => confirmedTransfers.value.some((x) => tKey(x) === tKey(t))
+async function toggleTransfer(t) {
+  if (!props.canEdit) return
+  const list = [...confirmedTransfers.value]
+  const i = list.findIndex((x) => tKey(x) === tKey(t))
+  if (i === -1) list.push({ from: t.from, to: t.to, amount: Math.round(Number(t.amount) || 0), at: new Date().toISOString() })
+  else list.splice(i, 1)
+  await plansStore.updatePlan(props.plan.id, { settled_transfers: list })
+  toast(i === -1 ? '已标记转账完成' : '已取消标记')
+}
+async function confirmAllTransfers() {
+  if (!props.canEdit || !transferPlan.value.length) return
+  const list = transferPlan.value.map((t) => ({ from: t.from, to: t.to, amount: Math.round(Number(t.amount) || 0), at: new Date().toISOString() }))
+  await plansStore.updatePlan(props.plan.id, { settled_transfers: list })
+  toast('已标记全部转账完成')
+}
+
 const catOf = (key) => CATS.find((c) => c.key === key) || CATS[CATS.length - 1]
 
 /** 显示名称;若成员已离开计划则取快照 */
@@ -277,6 +302,9 @@ function linkChip(b) {
           <span v-if="bills.length" class="chip chip-brand">{{ bills.length }} 笔</span>
           <span v-if="totalAmount" class="chip chip-amber">{{ money(totalAmount) }}</span>
           <span v-if="settled" class="chip chip-success"><i class="fa-solid fa-lock text-[10px]" aria-hidden="true"></i>已结算归档</span>
+          <span v-if="presence.editors('bill').length" class="chip chip-amber" :title="presence.editors('bill').map((e) => e.name).join('、')">
+            <span class="dot"></span>{{ presence.editors('bill').map((e) => e.name).join('、') }} 正在编辑
+          </span>
         </h2>
         <p class="muted mt-1">每笔记录涉及谁、谁垫付,按人自动算清账</p>
       </div>
@@ -375,18 +403,37 @@ function linkChip(b) {
       </div>
       <Transition v-if="transferPlan.length" name="fade-up">
         <div class="card card-lift col-span-2 p-5 sm:col-span-3 xl:col-span-4">
-          <p class="mb-3 flex items-center gap-2 text-[13.5px] font-semibold text-ink">
-            <i class="fa-solid fa-arrows-rotate text-primary" aria-hidden="true"></i>转账建议(最省事)
-          </p>
+          <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <p class="flex items-center gap-2 text-[13.5px] font-semibold text-ink">
+              <i class="fa-solid fa-arrows-rotate text-primary" aria-hidden="true"></i>转账建议(最省事)
+              <span class="muted text-[11.5px] font-normal">标记已转账后即为完成</span>
+            </p>
+            <BaseButton v-if="canEdit" size="sm" variant="soft" icon="fa-check-double" @click="confirmAllTransfers">全部标记已转</BaseButton>
+          </div>
           <div class="flex flex-wrap gap-2">
-            <span v-for="(t, i) in transferPlan" :key="i" class="chip chip-plain !px-3 !py-2 text-[13px]">
+            <div
+              v-for="(t, i) in transferPlan"
+              :key="i"
+              class="chip !px-3 !py-2 text-[13px]"
+              :class="isTransferConfirmed(t) ? 'chip-success' : 'chip-plain'"
+            >
               <Avatar :name="t.from" :size="18" :ring="false" />
               {{ t.from }}
               <i class="fa-solid fa-arrow-right text-[11px] text-primary" aria-hidden="true"></i>
               <Avatar :name="t.to" :size="18" :ring="false" />
               {{ t.to }}
               <b class="text-primary">{{ money(t.amount) }}</b>
-            </span>
+              <button
+                v-if="canEdit"
+                class="ml-1 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold transition active:scale-95"
+                :class="isTransferConfirmed(t) ? 'bg-white/60 text-[#16a34a]' : 'bg-primary/10 text-primary'"
+                :title="isTransferConfirmed(t) ? '取消标记' : '标记为已转账'"
+                @click.stop="toggleTransfer(t)"
+              >
+                <i :class="isTransferConfirmed(t) ? 'fa-solid fa-check' : 'fa-regular fa-circle'" aria-hidden="true"></i>
+                {{ isTransferConfirmed(t) ? '已转' : '标记已转' }}
+              </button>
+            </div>
           </div>
         </div>
       </Transition>

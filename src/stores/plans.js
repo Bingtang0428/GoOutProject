@@ -152,6 +152,7 @@ export const usePlansStore = defineStore('plans', () => {
       end_date: payload.end_date,
       gradient: payload.gradient ?? 0,
       budget: payload.budget ?? null,
+      currency: payload.currency || 'CNY',
       owner_id: self.id,
       members,
       viewers: []

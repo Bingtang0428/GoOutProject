@@ -12,9 +12,10 @@ import { useHead } from '@vueuse/head'
 import { usePlansStore } from '@/stores/plans'
 import { useContentStore } from '@/stores/content'
 import { useAuthStore } from '@/stores/auth'
-import { createPresence } from '@/composables/presence'
+import { usePresenceStore } from '@/stores/presence'
 import { pastelOf } from '@/utils/misc'
 import { fmtRange, planDays, todayISO, relKey } from '@/utils/date'
+import { setCurrency } from '@/utils/money'
 import DesktopSidebar from '@/components/layout/DesktopSidebar.vue'
 import MobileTopNav from '@/components/layout/MobileTopNav.vue'
 import MobileTabBar from '@/components/layout/MobileTabBar.vue'
@@ -50,6 +51,9 @@ const route = useRoute()
 
 // —— 依据路由参数定位计划
 const plan = computed(() => plansStore.plans.find((p) => p.id === route.params.id) || null)
+
+// 币种随计划切换(全站金额符号)
+watch(() => plan.value?.currency, (c) => setCurrency(c || 'CNY'), { immediate: true })
 
 useHead({
   title: computed(() => (plan.value ? `${plan.value.name} · 兔兔同行` : '计划详情 · 兔兔同行'))
@@ -103,15 +107,13 @@ function goSec(key) {
 let prevPlanId = null
 
 /* 在线状态(谁在看这份计划) */
-const onlineUsers = ref([])
-let presenceCtl = null
+const presence = usePresenceStore()
+const onlineUsers = computed(() => presence.users)
 watch(
   () => plan.value?.id,
   (id) => {
-    presenceCtl?.dispose()
-    presenceCtl = null
-    onlineUsers.value = []
-    if (id) presenceCtl = createPresence(id, (list) => (onlineUsers.value = list))
+    if (id) presence.connect(id)
+    else presence.disconnect()
   },
   { immediate: true }
 )
@@ -264,7 +266,7 @@ function backHome() {
 // 切页时释放订阅
 onBeforeUnmount(() => {
   if (prevPlanId) contentStore.detachRemote(prevPlanId)
-  presenceCtl?.dispose()
+  presence.disconnect()
   if (logsTimer) clearInterval(logsTimer)
 })
 </script>

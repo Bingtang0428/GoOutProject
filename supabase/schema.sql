@@ -26,6 +26,8 @@ alter table public.plans add column if not exists viewers jsonb not null default
 alter table public.plans add column if not exists budget numeric(12,2);
 alter table public.plans add column if not exists start_city text not null default '';
 alter table public.plans add column if not exists settled boolean not null default false; -- 分账是否已结算归档(锁定)
+alter table public.plans add column if not exists currency text not null default 'CNY'; -- 币种
+alter table public.plans add column if not exists settled_transfers jsonb not null default '[]'::jsonb; -- 已确认的转账 [{from,to,amount,at}]
 
 -- 每日路线(每日一行,destinations 为当天地点数组)
 create table if not exists public.route_days (
