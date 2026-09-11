@@ -834,17 +834,25 @@ export const useContentStore = defineStore('content', () => {
 
   /**
    * 把某家已选定的酒店按起终点规则同步进它所有的日期,并清理不在日期范围内的旧同步。
+   * 单晚(只选一天)时:入住当天作终点,次日(退房日)作起点。
    */
   async function syncStayToRoute(planId, row) {
     const dayNums = stayDays(row)
     const dates = new Set()
-    for (let i = 0; i < dayNums.length; i++) {
-      const date = dayDateByNum(planId, dayNums[i])
+    const targets = []
+    if (row.type === 'stay' && dayNums.length === 1) {
+      targets.push({ n: dayNums[0], asStart: false, asEnd: true })
+      targets.push({ n: dayNums[0] + 1, asStart: true, asEnd: false })
+    } else {
+      dayNums.forEach((n, i) =>
+        targets.push({ n, asStart: i > 0, asEnd: i < dayNums.length - 1 || dayNums.length === 1 })
+      )
+    }
+    for (const tg of targets) {
+      const date = dayDateByNum(planId, tg.n)
       if (!date) continue
       dates.add(date)
-      const asStart = i > 0
-      const asEnd = i < dayNums.length - 1 || dayNums.length === 1
-      await applyStayToDay(planId, date, row, { asStart, asEnd })
+      await applyStayToDay(planId, date, row, { asStart: tg.asStart, asEnd: tg.asEnd })
     }
     for (const anyDay of rows[planId]?.days || []) {
       if (dates.has(anyDay.date)) continue
@@ -1441,6 +1449,21 @@ export const useContentStore = defineStore('content', () => {
       let touchedDay = false
       let dAdded = 0
       let dUpdated = 0
+      // 确保出发点在当天路线里(第一段的起点);没有就补上
+      const firstFrom = legs[0]?.from
+      if (firstFrom?.name && !dests.some((d) => d.place === firstFrom.name)) {
+        dests.unshift({
+          id: uid('dst'),
+          time: '',
+          place: firstFrom.name,
+          lat: firstFrom.lat ?? null,
+          lng: firstFrom.lng ?? null,
+          note: '自驾出发点',
+          drv_from: true
+        })
+        touchedDay = true
+        dAdded++
+      }
       for (const lg of legs) {
         const t = lg.to || {}
         if (!t.name) continue

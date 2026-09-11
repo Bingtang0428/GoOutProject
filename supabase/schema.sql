@@ -84,6 +84,7 @@ alter table public.stays add column if not exists chosen boolean not null defaul
 alter table public.stays add column if not exists chosen_by jsonb;                           -- 由谁选定 {id,name}
 alter table public.stays add column if not exists days jsonb not null default '[]'::jsonb;   -- 多天入住 [1,2,3]
 alter table public.stays add column if not exists link text not null default '';             -- 外部预订链接(点评/携程/去哪儿…)
+alter table public.stays add column if not exists price numeric(12,2);                       -- 大概价格(住宿/晚 或 餐厅人均)
 
 -- TODO 清单(assignee = 指派给谁,分工用)
 create table if not exists public.todos (

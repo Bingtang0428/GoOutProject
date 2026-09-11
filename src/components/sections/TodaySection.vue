@@ -132,8 +132,10 @@ async function readReminder(r) {
         </h2>
         <p class="muted mt-1">一眼看出还要做什么 —— 下一站、待办、提醒、住宿</p>
       </div>
-      <BaseButton v-if="activeDay" icon="fa-person-walking-arrow-right" @click="travel = true">出行模式</BaseButton>
-      <InfoHint align="right" text="出行模式=全屏放大,只显示下一站与一键导航,方便旅途中随时查看。" />
+      <div class="flex items-center gap-2">
+        <BaseButton v-if="activeDay" icon="fa-person-walking-arrow-right" @click="travel = true">出行模式</BaseButton>
+        <InfoHint align="right" text="出行模式=全屏放大,只显示下一站与一键导航,方便旅途中随时查看。" />
+      </div>
     </div>
 
     <div v-if="!activeDay" class="card p-6">

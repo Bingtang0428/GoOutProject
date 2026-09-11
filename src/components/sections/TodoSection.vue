@@ -247,127 +247,121 @@ function countOf(key) {
           <div
             v-for="t in filtered"
             :key="t.id"
-            class="card flex flex-wrap items-center gap-x-4 gap-y-2 px-5 py-3.5 transition-all duration-280 ease-out hover:shadow-card-hover active:scale-[0.985]"
+            class="card px-4 py-3.5 transition-all duration-280 ease-out hover:shadow-card-hover sm:px-5"
           >
-            <BaseCheckbox
-              :model-value="myDone(t)"
-              :disabled="!myCanCheck(t)"
-              :title="myCanCheck(t) ? '' : '仅指派人可勾选完成'"
-              @update:model-value="() => store.toggleTodo(plan.id, t.id, me)"
-            />
-            <button
-              type="button"
-              class="min-w-0 flex-1 text-left text-[14.5px] transition-all duration-300 ease-out"
-              :class="[isDone(t) ? 'font-normal text-muted/80 line-through decoration-muted/60' : 'font-medium text-ink', canEdit ? 'hover:text-primary' : '']"
-              :disabled="!canEdit"
-              :title="canEdit ? '点击编辑任务' : ''"
-              @click="openEdit(t)"
-            >
-              {{ t.title }}
-            </button>
-            <span
-              v-if="assigneesOf(t).length > 1"
-              class="chip shrink-0 !px-2 !py-0 !text-[11px]"
-              :class="isDone(t) ? 'chip-success' : 'chip-plain'"
-              :title="`已完成 ${completionsOf(t).length}/${assigneesOf(t).length} 人`"
-            >
-              <i class="fa-solid fa-users text-[10px]" aria-hidden="true"></i>{{ completionsOf(t).length }}/{{ assigneesOf(t).length }}
-            </span>
-
-            <!-- 负责人指派(分工):展开多选参与者 -->
-            <template v-if="canEdit && assignFor === t.id">
-              <div class="flex w-full flex-wrap items-center gap-1.5 pb-0.5 pl-[46px]">
-                <span class="muted text-[11.5px]">指派给(可多选):</span>
-                <button
-                  v-for="p in participants"
-                  :key="p.id"
-                  type="button"
-                  class="chip transition-all duration-150 active:scale-95"
-                  :class="assigneesOf(t).some((a) => a.id === p.id) ? 'chip-brand' : 'chip-plain opacity-70'"
-                  @click="toggleAssignee(t, p)"
-                >
-                  <i v-if="assigneesOf(t).some((a) => a.id === p.id)" class="fa-solid fa-check text-[10px]" aria-hidden="true"></i>
-                  <Avatar :name="p.name" :size="18" :ring="false" :color="p.color" :seed="p.id" />{{ p.name }}
-                </button>
-                <button
-                  v-if="assigneesOf(t).length"
-                  class="chip chip-rose cursor-pointer !text-[11px]"
-                  @click="clearAssignees(t)"
-                >
-                  <i class="fa-solid fa-xmark" aria-hidden="true"></i>清空
-                </button>
-                <button class="chip chip-plain cursor-pointer !text-[11px]" @click="assignFor = null">完成</button>
-              </div>
-            </template>
-            <button
-              v-else
-              type="button"
-              class="chip shrink-0 transition-all duration-150 active:scale-95"
-              :class="assigneesOf(t).length ? 'chip-brand' : 'chip-plain'"
-              :title="canEdit ? '点击指派负责人(可多选)' : '负责人'"
-              @click="canEdit ? (assignFor = t.id) : null"
-            >
-              <template v-if="assigneesOf(t).length">
-                <Avatar
-                  v-for="a in assigneesOf(t).slice(0, 3)"
-                  :key="a.id || a.name"
-                  :name="a.name"
-                  :size="18"
-                  :ring="false"
-                  :color="memberOf(plan, a)?.color"
-                  :seed="a.id || a.name"
-                />
-                <span class="max-w-[130px] truncate">{{ assigneesOf(t).map((a) => a.name).join('、') }}</span>
-              </template>
-              <template v-else>
-                <i class="fa-solid fa-user-plus text-[11px]" aria-hidden="true"></i>
-                {{ canEdit ? '指派' : '未指派' }}
-              </template>
-            </button>
-
-            <!-- Day 归属 -->
-            <span v-if="t.day" class="chip chip-plain shrink-0 !px-2 !py-0 !text-[11px]" title="第 {{ t.day }} 天">
-              D{{ t.day }}
-            </span>
-
-            <!-- 截止日期标签:小圆点 + 文字;已到期 rose / 今天 amber -->
-            <template v-if="canEdit && pickDueFor === t.id">
-              <input
-                type="date"
-                class="field !w-auto !px-3 !py-1 text-[13px]"
-                @change="(e) => { if (e.target.value) store.setTodoDue(plan.id, t.id, e.target.value); pickDueFor = null }"
-                @blur="pickDueFor = null"
+            <!-- 第一行:勾选 + 标题 + 完成度 + 操作 -->
+            <div class="flex items-start gap-3">
+              <BaseCheckbox
+                class="mt-0.5"
+                :model-value="myDone(t)"
+                :disabled="!myCanCheck(t)"
+                :title="myCanCheck(t) ? '' : '仅指派人可勾选完成'"
+                @update:model-value="() => store.toggleTodo(plan.id, t.id, me)"
               />
-            </template>
-            <template v-else-if="canEdit">
               <button
-                v-if="t.due"
-                class="relative"
-                title="点击修改截止日期"
-                @click="pickDueFor = t.id"
+                type="button"
+                class="min-w-0 flex-1 text-left text-[14.5px] leading-snug transition-all duration-300 ease-out"
+                :class="[isDone(t) ? 'font-normal text-muted/80 line-through decoration-muted/60' : 'font-medium text-ink', canEdit ? 'hover:text-primary' : '']"
+                :disabled="!canEdit"
+                :title="canEdit ? '点击编辑任务' : ''"
+                @click="openEdit(t)"
               >
-                <span
-                  class="chip"
-                  :class="t.done ? 'chip-plain' : dueTone(t.due) === 'rose' ? 'chip-rose' : dueTone(t.due) === 'amber' ? 'chip-amber' : 'chip-plain'"
-                >
-                  <span class="dot"></span>
-                  {{ dueText(t.due) }}
-                </span>
+                {{ t.title }}
               </button>
-              <button v-else class="icon-btn" title="设置截止日期" @click="pickDueFor = t.id">
-                <i class="fa-regular fa-calendar" aria-hidden="true"></i>
-              </button>
-            </template>
-            <span v-else-if="t.due" class="chip" :class="t.done ? 'chip-plain' : dueTone(t.due) === 'rose' ? 'chip-rose' : dueTone(t.due) === 'amber' ? 'chip-amber' : 'chip-plain'">
-              <span class="dot"></span>{{ dueText(t.due) }}
-            </span>
+              <span
+                v-if="assigneesOf(t).length > 1"
+                class="chip shrink-0 !px-2 !py-0 !text-[11px]"
+                :class="isDone(t) ? 'chip-success' : 'chip-plain'"
+                :title="`已完成 ${completionsOf(t).length}/${assigneesOf(t).length} 人`"
+              >
+                <i class="fa-solid fa-users text-[10px]" aria-hidden="true"></i>{{ completionsOf(t).length }}/{{ assigneesOf(t).length }}
+              </span>
+              <div v-if="canEdit" class="flex shrink-0 gap-0.5">
+                <button class="icon-btn !h-8 !w-8" title="编辑任务" @click="openEdit(t)">
+                  <i class="fa-solid fa-pen text-[12px]" aria-hidden="true"></i>
+                </button>
+                <button class="icon-btn icon-btn-danger !h-8 !w-8" title="删除任务" @click="store.removeTodo(plan.id, t.id)">
+                  <i class="fa-solid fa-trash-can text-[12px]" aria-hidden="true"></i>
+                </button>
+              </div>
+            </div>
 
-            <button v-if="canEdit" class="icon-btn" title="编辑任务" @click="openEdit(t)">
-              <i class="fa-solid fa-pen" aria-hidden="true"></i>
-            </button>
-            <button v-if="canEdit" class="icon-btn icon-btn-danger" title="删除任务" @click="store.removeTodo(plan.id, t.id)">
-              <i class="fa-solid fa-trash-can" aria-hidden="true"></i>
-            </button>
+            <!-- 第二行:负责人 / 归属日 / 截止日期 -->
+            <div class="mt-2 flex flex-wrap items-center gap-2 pl-8">
+              <button
+                type="button"
+                class="chip transition-all duration-150 active:scale-95"
+                :class="assigneesOf(t).length ? 'chip-brand' : 'chip-plain'"
+                :title="canEdit ? '点击指派负责人(可多选)' : '负责人'"
+                @click="canEdit ? (assignFor = assignFor === t.id ? null : t.id) : null"
+              >
+                <template v-if="assigneesOf(t).length">
+                  <Avatar
+                    v-for="a in assigneesOf(t).slice(0, 3)"
+                    :key="a.id || a.name"
+                    :name="a.name"
+                    :size="18"
+                    :ring="false"
+                    :color="memberOf(plan, a)?.color"
+                    :seed="a.id || a.name"
+                  />
+                  <span class="max-w-[130px] truncate">{{ assigneesOf(t).map((a) => a.name).join('、') }}</span>
+                </template>
+                <template v-else>
+                  <i class="fa-solid fa-user-plus text-[11px]" aria-hidden="true"></i>
+                  {{ canEdit ? '指派' : '未指派' }}
+                </template>
+              </button>
+
+              <span v-if="t.day" class="chip chip-plain !px-2 !py-0 !text-[11px]" title="第 {{ t.day }} 天">
+                D{{ t.day }}
+              </span>
+
+              <template v-if="canEdit && pickDueFor === t.id">
+                <input
+                  type="date"
+                  class="field !w-auto !px-3 !py-1 text-[13px]"
+                  @change="(e) => { if (e.target.value) store.setTodoDue(plan.id, t.id, e.target.value); pickDueFor = null }"
+                  @blur="pickDueFor = null"
+                />
+              </template>
+              <template v-else-if="canEdit">
+                <button v-if="t.due" title="点击修改截止日期" @click="pickDueFor = t.id">
+                  <span class="chip" :class="t.done ? 'chip-plain' : dueTone(t.due) === 'rose' ? 'chip-rose' : dueTone(t.due) === 'amber' ? 'chip-amber' : 'chip-plain'">
+                    <span class="dot"></span>{{ dueText(t.due) }}
+                  </span>
+                </button>
+                <button v-else class="chip chip-plain !px-2 !py-0 !text-[11px]" title="设置截止日期" @click="pickDueFor = t.id">
+                  <i class="fa-regular fa-calendar mr-1" aria-hidden="true"></i>截止
+                </button>
+              </template>
+              <span v-else-if="t.due" class="chip" :class="t.done ? 'chip-plain' : dueTone(t.due) === 'rose' ? 'chip-rose' : dueTone(t.due) === 'amber' ? 'chip-amber' : 'chip-plain'">
+                <span class="dot"></span>{{ dueText(t.due) }}
+              </span>
+            </div>
+
+            <!-- 内联指派面板(多选) -->
+            <div
+              v-if="canEdit && assignFor === t.id"
+              class="mt-2 flex flex-wrap items-center gap-1.5 rounded-[10px] bg-surface-2/60 px-3 py-2"
+            >
+              <span class="muted text-[11.5px]">指派给(可多选):</span>
+              <button
+                v-for="p in participants"
+                :key="p.id"
+                type="button"
+                class="chip transition-all duration-150 active:scale-95"
+                :class="assigneesOf(t).some((a) => a.id === p.id) ? 'chip-brand' : 'chip-plain opacity-70'"
+                @click="toggleAssignee(t, p)"
+              >
+                <i v-if="assigneesOf(t).some((a) => a.id === p.id)" class="fa-solid fa-check text-[10px]" aria-hidden="true"></i>
+                <Avatar :name="p.name" :size="18" :ring="false" :color="p.color" :seed="p.id" />{{ p.name }}
+              </button>
+              <button v-if="assigneesOf(t).length" class="chip chip-rose cursor-pointer !text-[11px]" @click="clearAssignees(t)">
+                <i class="fa-solid fa-xmark" aria-hidden="true"></i>清空
+              </button>
+              <button class="chip chip-plain cursor-pointer !text-[11px]" @click="assignFor = null">完成</button>
+            </div>
           </div>
         </TransitionGroup>
       </div>

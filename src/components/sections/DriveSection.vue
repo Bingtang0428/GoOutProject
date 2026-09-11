@@ -78,6 +78,7 @@ const form = reactive({
   date: '',
   from: null, // {name,lat,lng} | null
   to: null,
+  fromTime: '',
   time: '',
   note: '',
   manualMin: '',
@@ -85,9 +86,14 @@ const form = reactive({
 })
 const calc = reactive({ busy: false, done: false, msg: '', min: null, km: null, tolls: 0, tollKm: 0, roads: [], segs: [], geometry: [] })
 
-/** 起点默认建议:上一天的最终到达;第一天给集合城市 */
+/** 起点默认建议:同一天上一段的终点 → 上一天最终到达 → 集合城市 */
 function defaultFrom(date) {
   const idx = days.value.findIndex((d) => d.date === date)
+  const same = days.value[idx]
+  if (same?.legs?.length) {
+    const last = same.legs[same.legs.length - 1]
+    if (last.to?.name) return { name: last.to.name, lat: last.to.lat ?? null, lng: last.to.lng ?? null }
+  }
   const prev = idx > 0 ? days.value[idx - 1] : null
   if (prev && prev.legs?.length) {
     const last = prev.legs[prev.legs.length - 1]
@@ -96,9 +102,20 @@ function defaultFrom(date) {
   return { name: props.plan.start_city || '出发地', lat: null, lng: null }
 }
 
+/** 从已确定的食宿快速填入起点/终点 */
+const stayOptions = computed(() => store.rowsOf(props.plan.id, 'stays'))
+const stayPickFor = ref(null) // 'from' | 'to' | null
+function pickStay(target, s) {
+  const geo = { name: s.name, lat: s.latitude ?? null, lng: s.longitude ?? null }
+  if (target === 'from') form.from = geo
+  else form.to = geo
+  stayPickFor.value = null
+  onPointChange()
+}
+
 function openAdd(date) {
   editLeg.value = null
-  Object.assign(form, { date, from: defaultFrom(date), to: null, time: '', note: '', manualMin: '', manualKm: '' })
+  Object.assign(form, { date, from: defaultFrom(date), to: null, fromTime: '', time: '', note: '', manualMin: '', manualKm: '' })
   Object.assign(calc, { busy: false, done: false, msg: '', min: null, km: null, tolls: 0, tollKm: 0, roads: [], segs: [], geometry: [] })
   showForm.value = true
 }
@@ -109,6 +126,7 @@ function openEdit(day, leg) {
     date: day.date,
     from: leg.from ? { name: leg.from.name, lat: leg.from.lat ?? null, lng: leg.from.lng ?? null } : null,
     to: leg.to ? { name: leg.to.name, lat: leg.to.lat ?? null, lng: leg.to.lng ?? null } : null,
+    fromTime: leg.from_time || '',
     time: leg.time || '',
     note: leg.note || '',
     manualMin: leg.drive_min ? String(leg.drive_min) : '',
@@ -145,6 +163,9 @@ async function doCompute() {
         min: leg.min, km: leg.km, tolls: leg.tolls ?? 0, tollKm: leg.tollKm ?? 0,
         roads: leg.roads || [], segs: leg.segs || [], geometry: leg.geometry || []
       })
+      // 让时长/里程输入框跟随自动计算结果,可再手动微调
+      form.manualMin = String(leg.min)
+      form.manualKm = String(leg.km)
     } else {
       calc.done = false
       calc.msg = '未能获取路线,可保存后重试,或直接手动填写时长/公里'
@@ -174,6 +195,7 @@ async function saveLeg() {
       lng: form.from?.lng ?? null
     },
     to: { name: to.name.trim(), lat: to.lat ?? null, lng: to.lng ?? null },
+    from_time: form.fromTime || '',
     time: form.time || '',
     note: form.note.trim(),
     drive_min: form.manualMin !== '' ? Number(form.manualMin) : calc.min,
@@ -436,6 +458,7 @@ function firstFreeDay() {
                     <div class="min-w-0">
                       <p class="text-[13.5px] font-semibold text-ink">{{ leg.from?.name || '出发地' }}</p>
                       <p v-if="fmtGeo(leg.from)" class="muted text-[10.5px] tabular-nums">{{ fmtGeo(leg.from) }}</p>
+                      <p v-if="leg.from_time" class="muted text-[10.5px]">约 {{ leg.from_time }} 出发</p>
                     </div>
                   </div>
                 </div>
@@ -595,12 +618,58 @@ function firstFreeDay() {
 
         <div class="grid gap-4 sm:grid-cols-2">
           <div>
-            <label class="flabel">起点</label>
+            <label class="flabel flex items-center justify-between">
+              <span>起点</span>
+              <button
+                v-if="stayOptions.length"
+                type="button"
+                class="chip chip-plain cursor-pointer !px-2 !py-0 !text-[11px]"
+                @click="stayPickFor = stayPickFor === 'from' ? null : 'from'"
+              >
+                <i class="fa-solid fa-hotel mr-1" aria-hidden="true"></i>从食宿选
+              </button>
+            </label>
             <GeoPlacePicker v-model="form.from" :hint="plan.start_city" placeholder="如:合肥(建议用上一天到达地)" @update:modelValue="onPointChange" />
+            <div v-if="stayPickFor === 'from'" class="card mt-1 max-h-40 overflow-y-auto p-1.5">
+              <button
+                v-for="s in stayOptions"
+                :key="s.id"
+                type="button"
+                class="flex w-full items-center gap-2 rounded-[8px] px-2 py-1.5 text-left text-[12.5px] transition-colors hover:bg-surface-2"
+                @click="pickStay('from', s)"
+              >
+                <i :class="s.type === 'food' ? 'fa-solid fa-utensils' : 'fa-solid fa-hotel'" class="text-[11px] text-primary/70" aria-hidden="true"></i>
+                <span class="min-w-0 flex-1 truncate">{{ s.name }}</span>
+                <span v-if="!Number.isFinite(s.latitude)" class="muted text-[10px]">缺坐标</span>
+              </button>
+            </div>
           </div>
           <div>
-            <label class="flabel">到达(终点)*</label>
+            <label class="flabel flex items-center justify-between">
+              <span>到达(终点)*</span>
+              <button
+                v-if="stayOptions.length"
+                type="button"
+                class="chip chip-plain cursor-pointer !px-2 !py-0 !text-[11px]"
+                @click="stayPickFor = stayPickFor === 'to' ? null : 'to'"
+              >
+                <i class="fa-solid fa-hotel mr-1" aria-hidden="true"></i>从食宿选
+              </button>
+            </label>
             <GeoPlacePicker v-model="form.to" :hint="plan.start_city" placeholder="选点或粘贴高德分享链接" @update:modelValue="onPointChange" />
+            <div v-if="stayPickFor === 'to'" class="card mt-1 max-h-40 overflow-y-auto p-1.5">
+              <button
+                v-for="s in stayOptions"
+                :key="s.id"
+                type="button"
+                class="flex w-full items-center gap-2 rounded-[8px] px-2 py-1.5 text-left text-[12.5px] transition-colors hover:bg-surface-2"
+                @click="pickStay('to', s)"
+              >
+                <i :class="s.type === 'food' ? 'fa-solid fa-utensils' : 'fa-solid fa-hotel'" class="text-[11px] text-primary/70" aria-hidden="true"></i>
+                <span class="min-w-0 flex-1 truncate">{{ s.name }}</span>
+                <span v-if="!Number.isFinite(s.latitude)" class="muted text-[10px]">缺坐标</span>
+              </button>
+            </div>
           </div>
         </div>
         <p class="muted -mt-2 text-[11.5px] leading-5">
@@ -655,11 +724,12 @@ function firstFreeDay() {
 
         <div class="grid grid-cols-2 gap-4">
           <div>
+            <label class="flabel">出发时刻(可选)</label>
+            <input v-model="form.fromTime" type="time" class="field" />
+          </div>
+          <div>
             <label class="flabel">到达时刻(可选)</label>
             <input v-model="form.time" type="time" class="field" />
-          </div>
-          <div class="flex items-end pb-1 text-[12px] text-muted">
-            <i class="fa-solid fa-lightbulb mr-1.5 text-amber" aria-hidden="true"></i>大约几点到,方便同伴等
           </div>
         </div>
 

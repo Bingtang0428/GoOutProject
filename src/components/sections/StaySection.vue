@@ -72,7 +72,7 @@ const showEdit = ref(false)
 const editingId = ref(null) // null = 新增
 const saving = ref(false)
 watch(showEdit, (v) => presence.setEditing(v ? 'stay' : null))
-const form = reactive({ type: 'stay', name: '', geo: null, phone: '', tags: [], booked: false, tagInput: '', assignee: null, days: [], link: '' })
+const form = reactive({ type: 'stay', name: '', geo: null, phone: '', tags: [], booked: false, tagInput: '', assignee: null, days: [], link: '', price: '' })
 
 const participants = computed(() => (props.plan.members || []).slice())
 
@@ -119,7 +119,7 @@ function mapUrl(address) {
 
 function openAdd() {
   editingId.value = null
-  Object.assign(form, { type: 'stay', name: '', geo: null, phone: '', tags: [], booked: false, tagInput: '', assignee: null, days: [], link: '' })
+  Object.assign(form, { type: 'stay', name: '', geo: null, phone: '', tags: [], booked: false, tagInput: '', assignee: null, days: [], link: '', price: '' })
   showEdit.value = true
 }
 
@@ -138,7 +138,8 @@ function openEdit(item) {
     tagInput: '',
     assignee: item.assignee || null,
     days: daysOf(item),
-    link: item.link || ''
+    link: item.link || '',
+    price: item.price != null && item.price !== '' ? String(item.price) : ''
   })
   showEdit.value = true
 }
@@ -191,7 +192,8 @@ async function save() {
       assignee: form.assignee,
       day: form.days[0] ?? null,
       days: [...form.days],
-      link: form.link.trim()
+      link: form.link.trim(),
+      price: form.price === '' ? null : Number(form.price) || 0
     }
     if (editingId.value) await store.updateStay(props.plan.id, editingId.value, payload)
     else await store.addStay(props.plan.id, payload)
@@ -354,6 +356,11 @@ function tagTone(tag) {
             负责:<Avatar :name="s.assignee.name" :size="18" :ring="false" class="ml-1" :color="memberOf(plan, s.assignee)?.color" :seed="s.assignee.id || s.assignee.name" />{{ s.assignee.name }}
           </div>
 
+          <div v-if="s.price" class="mb-1.5 flex items-center gap-2.5 text-[13px]">
+            <i class="fa-solid fa-coins text-[11px] text-amber" aria-hidden="true"></i>
+            <span class="font-semibold text-ink-soft">{{ s.type === 'food' ? `人均 ¥${s.price}` : `¥${s.price} / 晚` }}</span>
+          </div>
+
           <div v-if="s.tags?.length" class="mb-4 flex flex-wrap gap-2">
             <BaseTag v-for="t in s.tags" :key="t" :tone="tagTone(t)">{{ t }}</BaseTag>
           </div>
@@ -501,6 +508,10 @@ function tagTone(tag) {
           <input v-model="form.name" class="field" placeholder="酒店 / 餐厅名称" maxlength="40" />
         </div>
         <div>
+          <label class="flabel">{{ form.type === 'food' ? '人均大概价位 ¥' : '大概价格 ¥ / 晚' }}</label>
+          <input v-model="form.price" type="number" min="0" class="field" :placeholder="form.type === 'food' ? '例如 80' : '例如 320'" />
+        </div>
+        <div>
           <label class="flabel">地址 / 位置(选择候选可精确定位,用于一键导航)</label>
           <GeoPlacePicker v-model="form.geo" :hint="plan.start_city" placeholder="输入地址并选择准确位置,如:屯溪区延安路 8 号" />
         </div>
@@ -550,8 +561,14 @@ function tagTone(tag) {
             >
               {{ t }}
             </button>
-            <span v-for="t in form.tags.filter((x) => !PRESET_TAGS.includes(x))" :key="t">
-              <span class="chip chip-brand">{{ t }}</span>
+            <span v-for="t in form.tags.filter((x) => !PRESET_TAGS.includes(x))" :key="t" class="chip chip-brand">
+              {{ t }}
+              <i
+                class="fa-solid fa-xmark ml-0.5 cursor-pointer opacity-70 hover:opacity-100"
+                aria-hidden="true"
+                title="删除该标签"
+                @click="form.tags = form.tags.filter((x) => x !== t)"
+              ></i>
             </span>
           </div>
           <div class="mt-3 flex gap-2">
