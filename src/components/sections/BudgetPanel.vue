@@ -8,6 +8,9 @@ import { useContentStore } from '@/stores/content'
 import { usePlansStore } from '@/stores/plans'
 import { money } from '@/utils/money'
 import { fmtDay } from '@/utils/date'
+import { toast } from '@/composables/toast'
+import BaseButton from '@/components/ui/BaseButton.vue'
+import InfoHint from '@/components/ui/InfoHint.vue'
 
 const props = defineProps({
   plan: { type: Object, required: true }
@@ -47,24 +50,32 @@ function onSubBudgetChange(key, e) {
 }
 
 const CATS = [
-  { key: 'stay', label: '住宿', color: '#B75973' },
-  { key: 'food', label: '餐饮', color: '#F2A48E' },
-  { key: 'fuel', label: '加油', color: '#C3A0EA' },
-  { key: 'ticket', label: '门票', color: '#F2C464' },
-  { key: 'toll', label: '过路', color: '#7FC8A9' },
-  { key: 'other', label: '其他', color: '#9BB0C9' }
+  { key: 'stay', label: '住宿', color: '#B75973', weight: 0.35 },
+  { key: 'food', label: '餐饮', color: '#F2A48E', weight: 0.2 },
+  { key: 'fuel', label: '加油', color: '#C3A0EA', weight: 0.12 },
+  { key: 'ticket', label: '门票', color: '#F2C464', weight: 0.15 },
+  { key: 'toll', label: '过路', color: '#7FC8A9', weight: 0.06 },
+  { key: 'other', label: '其他', color: '#9BB0C9', weight: 0.12 }
 ]
 
+/** 分类的规划预算与已花(全部展示,便于规划阶段先分配) */
 const byCat = computed(() => {
   const map = new Map()
   for (const b of bills.value) {
-    const c = CATS.find((x) => x.key === b.category) || CATS[5]
-    map.set(c.key, (map.get(c.key) || 0) + Number(b.amount || 0))
+    map.set(b.category, (map.get(b.category) || 0) + Number(b.amount || 0))
   }
-  return CATS.map((c) => ({ ...c, amount: map.get(c.key) || 0, sub: Number(subBudgets.value[c.key]) || 0 })).filter(
-    (c) => c.amount > 0 || c.sub > 0
-  )
+  return CATS.map((c) => ({ ...c, amount: map.get(c.key) || 0, sub: Number(subBudgets.value[c.key]) || 0 }))
 })
+const anyCatData = computed(() => byCat.value.some((c) => c.amount > 0 || c.sub > 0))
+
+/** 按参考比例把总预算分配到各分类(规划阶段一键生成) */
+function autoAllocate() {
+  if (!isOwner.value || totalBudget.value <= 0) return
+  const next = {}
+  for (const c of CATS) next[c.key] = Math.round((totalBudget.value * c.weight) / 10) * 10
+  plansStore.updatePlan(props.plan.id, { sub_budgets: next })
+  toast('已按参考比例生成分类预算')
+}
 
 /** 按日花费:优先按「实际消费日期」分摊到旅行各天;未填则按付款日期 */
 const byDay = computed(() => {
@@ -151,13 +162,35 @@ function onBudgetChange(e) {
       </p>
     </div>
 
-    <!-- 按分类 -->
+    <!-- 分类预算与花费(规划 + 实际) -->
     <div class="card p-6">
-      <div class="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <p class="title-2">按分类花费</p>
-        <span v-if="subTotal" class="chip chip-plain !text-[11px]">分类子预算合计 {{ money(subTotal) }}</span>
+      <div class="mb-1 flex flex-wrap items-center justify-between gap-2">
+        <p class="title-2 flex items-center gap-2">
+          <i class="fa-solid fa-clipboard-list text-primary" aria-hidden="true"></i>分类预算与花费
+          <InfoHint
+            align="left"
+            text="规划阶段先给每类一个大概预算(如住宿约占多少、交通大概多少),再对照实际花费;可点「参考分配」按比例一键生成。"
+          />
+        </p>
+        <div class="flex flex-wrap items-center gap-2">
+          <span
+            v-if="subTotal"
+            class="chip !text-[11px]"
+            :class="totalBudget && subTotal > totalBudget ? 'chip-rose' : 'chip-plain'"
+          >
+            规划合计 {{ money(subTotal) }}<template v-if="totalBudget"> / 总预算 {{ money(totalBudget) }}</template>
+          </span>
+          <BaseButton
+            v-if="isOwner && totalBudget > 0"
+            size="sm"
+            variant="soft"
+            icon="fa-wand-magic-sparkles"
+            @click="autoAllocate"
+          >参考分配</BaseButton>
+        </div>
       </div>
-      <div v-if="byCat.length" class="space-y-3">
+      <p class="muted mb-4 text-[11.5px]">「规划预算」为总额;括号内是该类的人均参考。</p>
+      <div class="space-y-3">
         <div v-for="c in byCat" :key="c.key" class="flex flex-wrap items-center gap-3">
           <span class="chip chip-plain w-16 shrink-0 !justify-center">
             <span class="dot mr-1.5" :style="{ background: c.color }"></span>{{ c.label }}
@@ -166,27 +199,35 @@ function onBudgetChange(e) {
             <div class="h-2 overflow-hidden rounded-full bg-surface-2">
               <div
                 class="h-full rounded-full transition-[width] duration-500 ease-out"
-                :style="{ width: Math.max(4, (c.amount / (c.sub || spent || 1)) * 100) + '%', background: c.color }"
+                :style="{ width: Math.max(2, (c.amount / (c.sub || spent || 1)) * 100) + '%', background: c.color }"
               ></div>
             </div>
-            <p v-if="c.sub" class="muted mt-1 text-[11px]">
-              子预算 {{ money(c.sub) }} · 已用 {{ Math.round((c.amount / c.sub) * 100) }}%
+            <p class="muted mt-1 text-[11px]">
+              <template v-if="c.sub">规划 {{ money(c.sub) }}(人均 {{ money(c.sub / count) }}) · 已花 </template>
+              <template v-else>已花 </template>
+              {{ money(c.amount) }}
+              <template v-if="c.sub"> · {{ Math.round((c.amount / c.sub) * 100) }}%</template>
             </p>
           </div>
-          <span class="w-20 shrink-0 text-right text-[13px] font-bold text-ink">{{ money(c.amount) }}</span>
           <input
             v-if="isOwner"
             type="number"
             min="0"
             class="field !w-24 !py-1 !text-[12px]"
             :value="c.sub || ''"
-            placeholder="子预算"
-            :title="`给「${c.label}」设置分类子预算`"
+            placeholder="规划"
+            :title="`给「${c.label}」设置规划预算`"
             @change="(e) => onSubBudgetChange(c.key, e)"
           />
+          <span v-else class="w-20 shrink-0 text-right text-[12px] font-semibold text-ink">{{ c.sub ? money(c.sub) : '—' }}</span>
         </div>
       </div>
-      <p v-else class="muted text-[13px]">还没有任何支出,记下第一笔后这里会自动统计。</p>
+      <p v-if="totalBudget && subTotal > totalBudget" class="mt-3 text-[12px] font-medium text-rose">
+        <i class="fa-solid fa-circle-exclamation mr-1" aria-hidden="true"></i>分类规划合计已超出总预算 {{ money(subTotal - totalBudget) }}
+      </p>
+      <p v-else-if="!anyCatData" class="muted mt-3 text-[12px]">
+        还没有预算与支出 —— 可先设置人均预算后点「参考分配」,快速得到住宿/交通/餐饮等的大致占比。
+      </p>
     </div>
 
     <!-- 按日花费 -->
