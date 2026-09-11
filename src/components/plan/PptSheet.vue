@@ -423,7 +423,7 @@ async function downloadPptx() {
                         </div>
                         <p class="mt-1 text-[12px] text-[#9a7a86]">{{ f.address || '地址待补充' }}</p>
                         <p class="mt-1 text-[11px]" :style="{ color: f.booked ? '#16a34a' : '#b45309' }">
-                          {{ f.booked ? '已预订' : '待预订' }}<template v-if="f.tags?.length"> · {{ f.tags.join(' · ') }}</template>
+                          {{ f.booked ? '已预订' : '待预订' }}<template v-if="f.price"> · 人均 ¥{{ f.price }}</template><template v-if="f.tags?.length"> · {{ f.tags.join(' · ') }}</template>
                         </p>
                       </div>
                     </div>
@@ -439,7 +439,7 @@ async function downloadPptx() {
                       <div v-for="h in s.items" :key="h.id" class="rounded-[12px] bg-[#fdf4f8] p-4">
                         <p class="text-[15px] font-semibold text-[#3d2931]">{{ h.name }}</p>
                         <p class="mt-1 text-[12px] text-[#9a7a86]">{{ h.address || '地址待补充' }}</p>
-                        <p class="mt-1 text-[11px]" :style="{ color: h.booked ? '#16a34a' : '#b45309' }">{{ h.booked ? '已预订' : '待预订' }}</p>
+                        <p class="mt-1 text-[11px]" :style="{ color: h.booked ? '#16a34a' : '#b45309' }">{{ h.booked ? '已预订' : '待预订' }}<template v-if="h.price"> · ¥{{ h.price }}/晚</template></p>
                       </div>
                     </div>
                   </div>

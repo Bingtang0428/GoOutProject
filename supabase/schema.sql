@@ -76,6 +76,7 @@ create table if not exists public.stays (
   day        smallint,                                -- 第几天(1=出发日),食宿按天分组
   latitude   double precision,                        -- 精确定位(经选点器确认)
   longitude  double precision,
+  price      numeric(12,2),                           -- 大概价格(住宿/晚 或 餐厅人均)
   created_at timestamptz not null default now()
 );
 alter table public.stays add column if not exists assignee jsonb;

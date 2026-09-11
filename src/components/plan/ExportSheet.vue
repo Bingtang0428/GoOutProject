@@ -279,6 +279,7 @@ const grad = computed(() => {
                           <th class="w-14">类型</th>
                           <th>名称</th>
                           <th>地址</th>
+                          <th class="w-20">价位</th>
                           <th class="w-16">预订</th>
                         </tr>
                       </thead>
@@ -287,6 +288,7 @@ const grad = computed(() => {
                           <td class="w-14">{{ s.type === 'food' ? '餐厅' : '住宿' }}</td>
                           <td>{{ s.name }}</td>
                           <td>{{ s.address }}</td>
+                          <td class="w-20">{{ s.price ? (s.type === 'food' ? `人均 ¥${s.price}` : `¥${s.price}/晚`) : '' }}</td>
                           <td class="w-16">{{ s.booked ? '已订' : '待订' }}</td>
                         </tr>
                       </tbody>
