@@ -1180,6 +1180,19 @@ watch(
               </button>
             </header>
 
+            <!-- 当天备忘 -->
+            <div class="px-4 pb-3 sm:px-6">
+              <input
+                v-if="canEdit"
+                :value="day.memo"
+                class="inline-title w-full !text-[12.5px]"
+                placeholder="当天备忘(如:带雨伞 / 换现金 / 加满油)"
+                @change="(e) => store.updateDayMemo(plan.id, day.date, e.target.value)"
+                @blur="(e) => store.updateDayMemo(plan.id, day.date, e.target.value)"
+              />
+              <p v-else-if="day.memo" class="muted text-[12.5px]">备忘:{{ day.memo }}</p>
+            </div>
+
             <!-- Plan B 预案展示 -->
             <div
               v-if="day.plan_b"

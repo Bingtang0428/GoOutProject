@@ -9,7 +9,7 @@ import { useAuthStore } from '@/stores/auth'
 import { isSupabase, storageUrl, uploadCover } from '@/api/supabase'
 import { fetchLinkMeta } from '@/api/metadata'
 import { hostOf, PASTEL_GRADS, parseShareText, memberOf } from '@/utils/misc'
-import { fmtSavedAt } from '@/utils/date'
+import { fmtSavedAt, eachDayISO } from '@/utils/date'
 import BaseModal from '@/components/ui/BaseModal.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseTag from '@/components/ui/BaseTag.vue'
@@ -127,10 +127,32 @@ function onUrlPaste(e) {
 
 // —— 新增收藏
 const showAdd = ref(false)
-const form = reactive({ title: '', url: '', image: '', file: null, fileHint: '', uploading: false })
+const form = reactive({ title: '', url: '', image: '', file: null, fileHint: '', uploading: false, tags: [], day: null })
+
+/* 攻略标签与按天筛选 */
+const GUIDE_TAGS = ['路书', '景点', '美食', '住宿', '游玩', '出片', '交通', '购物']
+const filterTag = ref('')
+const filterDay = ref(null) // null=全部,0=未定,N=第N天
+const plannedDates = computed(() =>
+  props.plan.start_date && props.plan.end_date ? eachDayISO(props.plan.start_date, props.plan.end_date) : []
+)
+const shownGuides = computed(() => {
+  let list = guides.value
+  if (filterTag.value) list = list.filter((g) => (g.tags || []).includes(filterTag.value))
+  if (filterDay.value !== null) {
+    if (filterDay.value === 0) list = list.filter((g) => !g.day)
+    else list = list.filter((g) => g.day === filterDay.value)
+  }
+  return list
+})
+function toggleFormTag(t) {
+  const i = form.tags.indexOf(t)
+  if (i === -1) form.tags.push(t)
+  else form.tags.splice(i, 1)
+}
 
 function openAdd() {
-  Object.assign(form, { title: '', url: '', image: '', file: null, fileHint: '', uploading: false })
+  Object.assign(form, { title: '', url: '', image: '', file: null, fileHint: '', uploading: false, tags: [], day: null })
   metaHint.value = ''
   showAdd.value = true
 }
@@ -165,6 +187,8 @@ async function save() {
       title: form.title.trim(),
       url: form.url.trim(),
       image: image || '',
+      tags: [...form.tags],
+      day: form.day,
       created_at: new Date().toISOString()
     })
     toast('攻略已收藏')
@@ -196,10 +220,49 @@ async function save() {
       <BaseButton v-if="canEdit" icon="fa-plus" @click="openAdd">收藏一篇</BaseButton>
     </div>
 
+    <!-- 标签 / 按天筛选 -->
+    <div v-if="guides.length" class="mb-4 space-y-2">
+      <div class="flex flex-wrap items-center gap-2">
+        <span class="muted text-[11.5px]">分类</span>
+        <button
+          class="chip cursor-pointer transition-all duration-150 active:scale-95"
+          :class="filterTag === '' ? 'chip-brand' : 'chip-plain'"
+          @click="filterTag = ''"
+        >全部</button>
+        <button
+          v-for="t in GUIDE_TAGS"
+          :key="t"
+          class="chip cursor-pointer transition-all duration-150 active:scale-95"
+          :class="filterTag === t ? 'chip-brand' : 'chip-plain'"
+          @click="filterTag = filterTag === t ? '' : t"
+        >{{ t }}</button>
+      </div>
+      <div v-if="plannedDates.length" class="flex flex-wrap items-center gap-2">
+        <span class="muted text-[11.5px]">按天</span>
+        <button
+          class="chip cursor-pointer transition-all duration-150 active:scale-95"
+          :class="filterDay === null ? 'chip-brand' : 'chip-plain'"
+          @click="filterDay = null"
+        >全部</button>
+        <button
+          v-for="(d, i) in plannedDates"
+          :key="d"
+          class="chip cursor-pointer whitespace-nowrap transition-all duration-150 active:scale-95"
+          :class="filterDay === i + 1 ? 'chip-brand' : 'chip-plain'"
+          @click="filterDay = filterDay === i + 1 ? null : i + 1"
+        >Day {{ i + 1 }}</button>
+        <button
+          class="chip cursor-pointer transition-all duration-150 active:scale-95"
+          :class="filterDay === 0 ? 'chip-brand' : 'chip-plain'"
+          @click="filterDay = filterDay === 0 ? null : 0"
+        >未关联</button>
+      </div>
+    </div>
+
     <!-- 瀑布流:CSS columns 实现,图片按自然比例错落排布 -->
-    <div v-if="guides.length" class="masonry">
+    <div v-if="shownGuides.length" class="masonry">
       <TransitionGroup name="fade-up-list" tag="div" class="contents">
-        <article v-for="g in guides" :key="g.id" class="card card-lift group overflow-hidden p-0">
+        <article v-for="g in shownGuides" :key="g.id" class="card card-lift group overflow-hidden p-0">
           <a
             v-if="g.image"
             :href="g.url || '#'"
@@ -212,7 +275,7 @@ async function save() {
               :alt="g.title"
               loading="lazy"
               referrerpolicy="no-referrer"
-              class="w-full transition-transform duration-500 ease-out group-hover:scale-[1.04]"
+              class="h-44 w-full object-cover transition-transform duration-500 ease-out group-hover:scale-[1.04] sm:h-auto"
             />
           </a>
           <div
@@ -234,6 +297,10 @@ async function save() {
               </a>
               <template v-else>{{ g.title }}</template>
             </h3>
+            <div v-if="g.tags?.length || g.day" class="mb-1 flex flex-wrap gap-1">
+              <span v-for="t in g.tags" :key="t" class="chip chip-brand !px-2 !py-0 !text-[10.5px]">{{ t }}</span>
+              <span v-if="g.day" class="chip chip-plain !px-2 !py-0 !text-[10.5px]">D{{ g.day }}</span>
+            </div>
             <div class="mt-3 flex flex-wrap items-center justify-between gap-2">
               <div class="flex items-center gap-2">
                 <button
@@ -355,6 +422,33 @@ async function save() {
             <input type="file" accept="image/*" class="hidden" @change="onPickFile" />
           </label>
           <p v-if="form.fileHint" class="mt-2 text-[12px] font-medium text-rose">{{ form.fileHint }}</p>
+        </div>
+        <div>
+          <label class="flabel">分类标签(可多选)</label>
+          <div class="flex flex-wrap gap-2">
+            <button
+              v-for="t in GUIDE_TAGS"
+              :key="t"
+              type="button"
+              class="chip transition-all duration-150 active:scale-95"
+              :class="form.tags.includes(t) ? 'chip-brand' : 'chip-plain'"
+              @click="toggleFormTag(t)"
+            >{{ t }}</button>
+          </div>
+        </div>
+        <div v-if="plannedDates.length">
+          <label class="flabel">关联到哪一天(可选,便于按天筛选)</label>
+          <div class="flex flex-wrap gap-2">
+            <button type="button" class="chip transition-all duration-150 active:scale-95" :class="form.day === null ? 'chip-brand' : 'chip-plain'" @click="form.day = null">不关联</button>
+            <button
+              v-for="(d, i) in plannedDates"
+              :key="d"
+              type="button"
+              class="chip transition-all duration-150 active:scale-95"
+              :class="form.day === i + 1 ? 'chip-brand' : 'chip-plain'"
+              @click="form.day = i + 1"
+            >Day {{ i + 1 }}</button>
+          </div>
         </div>
       </div>
       <template #footer>

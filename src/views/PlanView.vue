@@ -145,6 +145,7 @@ async function loadPlan() {
   await contentStore.ensureLoaded(plan.value)
   await contentStore.ensureDayRows(plan.value) // 日期区间变化时补齐每日占位
   await contentStore.ensureDriveDayRows(plan.value) // 自驾规划同样按日占位
+  contentStore.ensureStayVoteReminders(plan.value.id, plan.value.members || []) // 未定住宿自动提醒投票
   checkLogsUnread()
   if (!logsTimer) logsTimer = setInterval(checkLogsUnread, 60000)
 }

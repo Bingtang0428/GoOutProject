@@ -30,6 +30,22 @@ const days = computed(() =>
 const drives = computed(() => content.rowsOf(props.plan.id, 'drive'))
 const stays = computed(() => content.rowsOf(props.plan.id, 'stays'))
 
+function stayDays(s) {
+  if (Array.isArray(s.days) && s.days.length) return s.days
+  return s.day ? [s.day] : []
+}
+/** 食宿按天分组 + 未安排日期 */
+const stayGroups = computed(() => {
+  const groups = []
+  days.value.forEach((d, i) => {
+    const items = stays.value.filter((s) => stayDays(s).includes(i + 1))
+    if (items.length) groups.push({ label: `第 ${i + 1} 天 · ${fmtDay(d.date, false)}`, items })
+  })
+  const unassigned = stays.value.filter((s) => !stayDays(s).length)
+  if (unassigned.length) groups.push({ label: '未安排日期', items: unassigned })
+  return groups
+})
+
 /** 某天的自驾规划行(可能没有) */
 function driveOf(date) {
   return drives.value.find((d) => d.date === date) || null
@@ -255,24 +271,27 @@ const grad = computed(() => {
                 <!-- 食宿 -->
                 <template v-if="stays.length">
                   <h2 class="print-h2">三、食宿安排</h2>
-                  <table class="print-table">
-                    <thead>
-                      <tr>
-                        <th class="w-14">类型</th>
-                        <th>名称</th>
-                        <th>地址</th>
-                        <th class="w-16">预订</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr v-for="s in stays" :key="s.id">
-                        <td class="w-14">{{ s.type === 'food' ? '餐厅' : '住宿' }}</td>
-                        <td>{{ s.name }}</td>
-                        <td>{{ s.address }}</td>
-                        <td class="w-16">{{ s.booked ? '已订' : '待订' }}</td>
-                      </tr>
-                    </tbody>
-                  </table>
+                  <div v-for="grp in stayGroups" :key="grp.label" class="mt-2">
+                    <p class="print-day-title">{{ grp.label }}</p>
+                    <table class="print-table">
+                      <thead>
+                        <tr>
+                          <th class="w-14">类型</th>
+                          <th>名称</th>
+                          <th>地址</th>
+                          <th class="w-16">预订</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="s in grp.items" :key="s.id">
+                          <td class="w-14">{{ s.type === 'food' ? '餐厅' : '住宿' }}</td>
+                          <td>{{ s.name }}</td>
+                          <td>{{ s.address }}</td>
+                          <td class="w-16">{{ s.booked ? '已订' : '待订' }}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
                 </template>
 
                 <!-- 待办 -->

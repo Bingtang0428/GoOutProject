@@ -177,8 +177,7 @@ async function readReminder(r) {
             <span v-if="activeDay?.title" class="chip chip-plain">{{ activeDay.title }}</span>
           </h3>
           <p v-if="!stops.length" class="muted py-4 text-center text-[12.5px]">这一天还没有安排地点</p>
-          <ol v-else class="space-y-2">
-            <li
+          <ol v-else class="space-y-2">            <li
               v-for="(x, i) in stops"
               :key="x.id"
               class="flex items-center gap-3 rounded-[12px] px-3.5 py-2.5 transition-colors"
@@ -199,6 +198,9 @@ async function readReminder(r) {
               </a>
             </li>
           </ol>
+          <p v-if="activeDay?.memo" class="mt-3 flex items-start gap-2 rounded-[10px] bg-amber/10 px-3 py-2 text-[12.5px] leading-relaxed text-ink-soft">
+            <i class="fa-solid fa-note-sticky mt-0.5 text-amber" aria-hidden="true"></i>{{ activeDay.memo }}
+          </p>
         </div>
 
         <!-- 侧栏:住宿 / 待办 / 提醒 -->

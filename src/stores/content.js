@@ -968,7 +968,7 @@ export const useContentStore = defineStore('content', () => {
 
   function addGuide(planId, payload) {
     return remoteWrite(planId, 'guides', 'guides', {
-      id: uid('guide'), plan_id: planId, title: '', url: '', image: '', ...payload
+      id: uid('guide'), plan_id: planId, title: '', url: '', image: '', tags: [], day: null, ...payload
     })
   }
 
@@ -1232,6 +1232,39 @@ export const useContentStore = defineStore('content', () => {
   /** 当天 Plan B 预案(雨天/备选路线等) */
   async function updateDayPlanB(planId, date, text) {
     await writeDayRow(planId, date, { plan_b: text })
+  }
+
+  /** 当天备忘 */
+  async function updateDayMemo(planId, date, memo) {
+    await writeDayRow(planId, date, { memo })
+  }
+
+  /**
+   * 某天还没有选定住宿、且有 2 家以上备选时,自动生成「去投票」提醒(每天一次)。
+   * @param {Array} members 计划成员,作为提醒对象
+   */
+  async function ensureStayVoteReminders(planId, members = []) {
+    const daysList = (rows[planId]?.days || []).slice().sort((a, b) => a.date.localeCompare(b.date))
+    const staysList = rows[planId]?.stays || []
+    const remindersList = rows[planId]?.reminders || []
+    for (let i = 0; i < daysList.length; i++) {
+      const day = daysList[i]
+      if (day.vote_reminded) continue
+      const n = i + 1
+      const cands = staysList.filter((s) => s.type !== 'food' && stayDays(s).includes(n))
+      if (cands.length < 2 || cands.some((s) => s.chosen)) continue
+      const title = `[住宿投票] 第 ${n} 天还没定住宿,去「食宿」投一票吧`
+      if (!remindersList.some((r) => r.title === title)) {
+        await addReminder(planId, {
+          title,
+          date: day.date,
+          time: '09:00',
+          targets: members.map((m) => ({ id: m.id, name: m.name })),
+          reads: []
+        })
+      }
+      await writeDayRow(planId, day.date, { vote_reminded: true })
+    }
   }
 
   function updateFuel(planId, id, patch) {
@@ -1598,6 +1631,8 @@ export const useContentStore = defineStore('content', () => {
     removeGuideComment,
     toggleGuideCommentLike,
     updateDayPlanB,
+    updateDayMemo,
+    ensureStayVoteReminders,
     lastDeleted,
     undoLast,
     clearUndo,

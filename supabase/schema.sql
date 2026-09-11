@@ -28,6 +28,8 @@ alter table public.plans add column if not exists start_city text not null defau
 alter table public.plans add column if not exists settled boolean not null default false; -- 分账是否已结算归档(锁定)
 alter table public.plans add column if not exists currency text not null default 'CNY'; -- 币种
 alter table public.plans add column if not exists settled_transfers jsonb not null default '[]'::jsonb; -- 已确认的转账 [{from,to,amount,at}]
+alter table public.plans add column if not exists budget_per numeric(12,2);                -- 人均预算
+alter table public.plans add column if not exists sub_budgets jsonb not null default '{}'::jsonb; -- 分类子预算 {category:amount}
 
 -- 每日路线(每日一行,destinations 为当天地点数组)
 create table if not exists public.route_days (
@@ -41,6 +43,8 @@ create table if not exists public.route_days (
   unique (plan_id, date)
 );
 alter table public.route_days add column if not exists plan_b text not null default '';
+alter table public.route_days add column if not exists memo text not null default '';   -- 当天备忘
+alter table public.route_days add column if not exists vote_reminded boolean not null default false; -- 是否已生成「住宿投票」提醒
 
 -- 旅行相册(按日期打卡,生成回忆册)
 create table if not exists public.memories (
@@ -111,6 +115,8 @@ create table if not exists public.guides (
   image      text not null default '',                -- 封面(storage 地址或外链)
   created_at timestamptz not null default now()
 );
+alter table public.guides add column if not exists tags jsonb not null default '[]'::jsonb; -- 分类标签(多选)
+alter table public.guides add column if not exists day smallint;                            -- 关联到第几天
 
 -- 攻略评论
 create table if not exists public.guide_comments (
