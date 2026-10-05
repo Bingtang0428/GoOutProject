@@ -215,6 +215,7 @@ returns jsonb language plpgsql security definer set search_path = public as $$
 declare
   rec     public.invite_codes%rowtype;
   new_id  uuid;
+  g       jsonb;
 begin
   if exists (select 1 from public.accounts where name = p_name) then
     return jsonb_build_object('ok', false, 'reason', 'name_taken');
@@ -234,22 +235,19 @@ begin
 
   -- 绑定计划:支持多计划授权(grants),兼容旧的单计划 plan_id/role
   if rec.grants is not null and jsonb_array_length(rec.grants) > 0 then
-    declare g jsonb;
-    begin
-      for g in select * from jsonb_array_elements(rec.grants) loop
-        if (g->>'role') = 'viewer' then
-          update public.plans
-             set viewers = viewers || jsonb_build_array(jsonb_build_object('id', new_id, 'name', p_name))
-           where id = (g->>'plan_id')::uuid
-             and not viewers @> jsonb_build_array(jsonb_build_object('id', new_id));
-        else
-          update public.plans
-             set members = members || jsonb_build_array(jsonb_build_object('id', new_id, 'name', p_name))
-           where id = (g->>'plan_id')::uuid
-             and not members @> jsonb_build_array(jsonb_build_object('id', new_id));
-        end if;
-      end loop;
-    end;
+    for g in select value from jsonb_array_elements(rec.grants) loop
+      if (g->>'role') = 'viewer' then
+        update public.plans
+           set viewers = viewers || jsonb_build_array(jsonb_build_object('id', new_id, 'name', p_name))
+         where id = (g->>'plan_id')::uuid
+           and not viewers @> jsonb_build_array(jsonb_build_object('id', new_id));
+      else
+        update public.plans
+           set members = members || jsonb_build_array(jsonb_build_object('id', new_id, 'name', p_name))
+         where id = (g->>'plan_id')::uuid
+           and not members @> jsonb_build_array(jsonb_build_object('id', new_id));
+      end if;
+    end loop;
   elsif rec.role = 'member' and rec.plan_id is not null then
     update public.plans
        set members = members || jsonb_build_array(jsonb_build_object('id', new_id, 'name', p_name))

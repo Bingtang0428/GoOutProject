@@ -61,7 +61,7 @@ export const useAuthStore = defineStore('auth', () => {
       p_password: pwd,
       p_code: raw
     })
-    if (error) throw new Error('注册服务暂不可用,请稍后重试')
+    if (error) throw new Error(`注册服务不可用:${error.message || '请稍后重试'}`)
     if (!data?.ok) {
       const reason = {
         name_taken: '该昵称已被注册,换一个或直接登录',
@@ -87,7 +87,7 @@ export const useAuthStore = defineStore('auth', () => {
       p_name: name,
       p_password: password
     })
-    if (error) throw new Error('登录服务暂不可用,请稍后重试')
+    if (error) throw new Error(`登录服务不可用:${error.message || '请稍后重试'}`)
     if (!data?.ok) {
       const reason = {
         account_not_found: '账号不存在,请先用邀请码注册',
