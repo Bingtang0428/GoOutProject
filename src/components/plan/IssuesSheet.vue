@@ -96,7 +96,25 @@ const issues = computed(() => {
       push('amber', 'fa-map', `${fmtDay(d.date)} 还没有安排地点`)
     }
   }
-  // 6) 未开始空行程提示
+  // 7) 相邻地点时间偏紧/倒挂 + 单日车程过长
+  for (const d of sorted) {
+    const dests = (d.destinations || []).filter((x) => !x.stay_role || x.stay_role === 'end')
+    for (let i = 1; i < dests.length; i++) {
+      const prev = dests[i - 1]
+      const cur = dests[i]
+      const pt = toMin(prev.time)
+      const ct = toMin(cur.time)
+      const dm = Number(cur.drive_min) || 0
+      if (pt != null && ct != null && dm > 0 && pt + dm > ct) {
+        push('amber', 'fa-clock', `${fmtDay(d.date, false)}:「${prev.place}」到「${cur.place}」需约 ${dm} 分钟,但日程只留了 ${ct - pt} 分钟,时间偏紧`)
+      }
+    }
+    const totalDrive = (d.destinations || []).reduce((sum, x) => sum + (Number(x.drive_min) || 0), 0)
+    if (totalDrive >= 360) {
+      push('amber', 'fa-car-side', `${fmtDay(d.date, false)} 驾驶约 ${Math.round((totalDrive / 60) * 10) / 10} 小时,建议拆段或安排换手`)
+    }
+  }
+  // 8) 未开始空行程提示
   if (!rows.days.some((d) => (d.destinations || []).length) && s >= today) {
     push('plain', 'fa-route', '整个行程还没排任何地点,路线里点「添加目的地」开始吧')
   }

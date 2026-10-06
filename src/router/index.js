@@ -28,6 +28,12 @@ const router = createRouter({
       meta: { public: true }
     },
     {
+      path: '/share/:id',
+      name: 'share',
+      component: () => import('@/views/ShareView.vue'),
+      meta: { public: true }
+    },
+    {
       path: '/admin',
       name: 'admin',
       component: () => import('@/views/AdminView.vue'),

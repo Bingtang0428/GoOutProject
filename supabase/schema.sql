@@ -458,8 +458,11 @@ end $$;
 
 -- -------------------------------------------------------------
 -- RLS:演示阶段允许匿名读写。正式环境请替换为基于 auth.uid() 的策略!
+-- ⚠️ 说明:本应用采用「自定义 accounts 表 + 匿名 anon key」登录,未接入 Supabase Auth,
+--    数据库侧拿不到登录用户身份(auth.uid() 为空),因此无法做真正意义上的行级安全。
+--    当前仅靠前端做角色控制。若要收紧到「仅成员可读写、围观者只读」,
+--    需改为 Supabase Auth(邮箱/密码)并把 plans.members 与 auth.uid() 关联。
 -- 角色约定:plans.owner_id=创建者、plans.members=参与者、plans.viewers=围观者。
--- 上线时建议:围观者仅 SELECT,参与者仅成员表 INSERT/UPDATE/DELETE。
 -- -------------------------------------------------------------
 alter table public.plans      enable row level security;
 alter table public.route_days enable row level security;

@@ -77,6 +77,41 @@ function autoAllocate() {
   toast('已按参考比例生成分类预算')
 }
 
+/** 按当前行程数据粗略估算分类预算 */
+function estimateFromTrip() {
+  if (!isOwner.value) return
+  const days = content.rowsOf(props.plan.id, 'days')
+  const stays = content.rowsOf(props.plan.id, 'stays')
+  const drive = content.rowsOf(props.plan.id, 'drive')
+  const hotels = stays.filter((s) => s.type !== 'food')
+  const prices = hotels.map((h) => Number(h.price)).filter((n) => n > 0)
+  const avgHotel = prices.length ? prices.reduce((a, b) => a + b, 0) / prices.length : 0
+  const nights = Math.max(0, days.length - 1)
+  let km = 0
+  for (const d of days) for (const x of d.destinations || []) km += Number(x.distance_km) || 0
+  if (!km) for (const dr of drive) for (const lg of dr.legs || []) km += Number(lg.km) || 0
+  let tolls = 0
+  for (const dr of drive) for (const lg of dr.legs || []) tolls += Number(lg.tolls) || 0
+  const count = Math.max(1, props.plan.members?.length || 1)
+  const next = {
+    stay: Math.round((avgHotel * nights) / 10) * 10,
+    food: 100 * days.length * count,
+    fuel: Math.round(((km / 100) * 8 * 8) / 10) * 10,
+    ticket: 80 * days.length * count,
+    toll: Math.round(tolls),
+    other: 0
+  }
+  const base = next.stay + next.food + next.fuel + next.ticket + next.toll
+  next.other = Math.round((base * 0.1) / 10) * 10
+  for (const k of Object.keys(next)) if (!next[k]) delete next[k]
+  if (!Object.keys(next).length) {
+    toast('数据不足,先添加地点/食宿/里程后再试', 'info')
+    return
+  }
+  plansStore.updatePlan(props.plan.id, { sub_budgets: next })
+  toast('已按当前行程粗略估算分类预算')
+}
+
 /** 按日花费:优先按「实际消费日期」分摊到旅行各天;未填则按付款日期 */
 const byDay = computed(() => {
   const map = new Map()
@@ -187,6 +222,14 @@ function onBudgetChange(e) {
             icon="fa-wand-magic-sparkles"
             @click="autoAllocate"
           >参考分配</BaseButton>
+          <BaseButton
+            v-if="isOwner"
+            size="sm"
+            variant="ghost"
+            icon="fa-calculator"
+            title="按当前行程(住宿晚数/里程/过路)粗略估算分类预算"
+            @click="estimateFromTrip"
+          >按行程估算</BaseButton>
         </div>
       </div>
       <p class="muted mb-4 text-[11.5px]">「规划预算」为总额;括号内是该类的人均参考。</p>

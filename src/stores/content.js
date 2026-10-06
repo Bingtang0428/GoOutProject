@@ -529,6 +529,36 @@ export const useContentStore = defineStore('content', () => {
     if (!isSupabase) localDb.dropPlan(planId)
   }
 
+  /** 导出某计划全部内容(用于备份) */
+  function exportRows(planId) {
+    const out = {}
+    for (const key of CONTENT_KEYS) out[key] = JSON.parse(JSON.stringify(rows[planId]?.[key] || []))
+    return out
+  }
+
+  /** 批量导入内容行到某计划(用于恢复备份) */
+  async function importRows(planId, key, list) {
+    if (!TABLES[key] || !Array.isArray(list) || !list.length) return
+    ensureBucket(planId)
+    const clean = (r) => {
+      const { created_at: _c, updated_at: _u, id: _i, plan_id: _p, ...rest } = r
+      return rest
+    }
+    if (!isSupabase) {
+      const arr = list.map((r) => ({ ...clean(r), id: uid(), plan_id: planId }))
+      localDb.saveContent(planId, key, arr)
+      rows[planId][key] = arr
+      return
+    }
+    const payload = list.map((r) => ({ ...clean(r), id: makeUuid(), plan_id: planId }))
+    const { data, error } = await supabase.from(TABLES[key]).insert(payload).select()
+    if (error) {
+      console.warn('[content] 导入失败', key, error.message)
+      return
+    }
+    for (const r of data || []) applyById(planId, key, r)
+  }
+
   // ------------------------------------------------------------
   // 路线
   // ------------------------------------------------------------
@@ -1572,6 +1602,8 @@ export const useContentStore = defineStore('content', () => {
     ensureDayRows,
     detachRemote,
     dropPlan,
+    exportRows,
+    importRows,
     addDestination,
     removeDestination,
     updateDayTitle,

@@ -43,12 +43,14 @@ import GlobalSearch from '@/components/plan/GlobalSearch.vue'
 import ReportSheet from '@/components/plan/ReportSheet.vue'
 import { toast } from '@/composables/toast'
 import { showNotify } from '@/composables/notify'
+import { useBackup } from '@/composables/backup'
 import MemorySheet from '@/components/plan/MemorySheet.vue'
 import IssuesSheet from '@/components/plan/IssuesSheet.vue'
 
 const plansStore = usePlansStore()
 const contentStore = useContentStore()
 const auth = useAuthStore()
+const backup = useBackup()
 const router = useRouter()
 const route = useRoute()
 
@@ -197,6 +199,7 @@ const showPerm = ref(false)
 const showExport = ref(false)
 const showPpt = ref(false)
 const showSearch = ref(false)
+const desktopMore = ref(false)
 const showLogs = ref(false)
 const showReport = ref(false)
 const showMemory = ref(false)
@@ -274,6 +277,25 @@ async function doDuplicate() {
     }
   } catch {
     toast('复制失败,请稍后重试', 'error')
+  }
+}
+
+/** 复制公开只读分享链接 */
+async function sharePlan() {
+  const url = `${window.location.origin}/share/${plan.value.id}`
+  try {
+    if (navigator.share) {
+      await navigator.share({ title: plan.value.name, url })
+      return
+    }
+  } catch {
+    /* 用户取消或被拦截,回退复制 */
+  }
+  try {
+    await navigator.clipboard.writeText(url)
+    toast('已复制分享链接,发给队友即可只读查看')
+  } catch {
+    window.prompt('复制分享链接', url)
   }
 }
 
@@ -374,45 +396,60 @@ onBeforeUnmount(() => {
               </button>
             </div>
 
-            <!-- 桌面操作(窄屏自动换到下一行) -->
-            <div class="hidden flex-wrap items-center gap-2 lg:flex">
-              <button v-if="isSupabase" class="btn btn-ghost btn-sm hero-surface" @click="openLogs">
-                <i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i>最近动态
-                <span v-if="logsUnread" class="chip chip-rose !px-1.5 !py-0 !text-[10px]">{{ logsUnread }}</span>
-              </button>
-              <button class="btn btn-ghost btn-sm hero-surface" @click="showIssues = true">
-                <i class="fa-solid fa-stethoscope" aria-hidden="true"></i>体检
-              </button>
-              <button class="btn btn-ghost btn-sm hero-surface" @click="showSearch = true">
-                <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>搜索
-              </button>
-              <button class="btn btn-ghost btn-sm hero-surface" @click="showReport = true">
-                <i class="fa-solid fa-chart-pie" aria-hidden="true"></i>复盘
-              </button>
+            <!-- 桌面操作(次级操作收进「更多」下拉,减少拥挤) -->
+            <div class="relative hidden flex-wrap items-center gap-2 lg:flex">
               <button class="btn btn-ghost btn-sm hero-surface" @click="showExport = true">
                 <i class="fa-solid fa-file-export" aria-hidden="true"></i>导出行程单
               </button>
-              <button class="btn btn-ghost btn-sm hero-surface" @click="showPpt = true">
+              <button class="btn btn-primary btn-sm" @click="showPpt = true">
                 <i class="fa-solid fa-file-powerpoint" aria-hidden="true"></i>生成 PPT
               </button>
-              <button v-if="canManage" class="btn btn-ghost btn-sm hero-surface" @click="showPerm = true">
-                <i class="fa-solid fa-user-shield" aria-hidden="true"></i>成员与权限
+              <button class="btn btn-ghost btn-sm hero-surface" @click="desktopMore = !desktopMore">
+                <i class="fa-solid fa-ellipsis" aria-hidden="true"></i>更多
+                <span v-if="logsUnread" class="h-1.5 w-1.5 rounded-full bg-rose"></span>
               </button>
-              <button v-if="isOwner" class="btn btn-ghost btn-sm hero-surface" @click="openEdit">
-                <i class="fa-solid fa-pen" aria-hidden="true"></i>编辑计划
-              </button>
-              <button v-if="isOwner" class="btn btn-ghost btn-sm hero-surface" @click="doDuplicate">
-                <i class="fa-solid fa-copy" aria-hidden="true"></i>复制计划
-              </button>
-              <button v-if="isOwner" class="btn btn-danger-soft btn-sm" @click="showDelete = true">
-                <i class="fa-solid fa-trash-can" aria-hidden="true"></i>删除
-              </button>
-              <InfoHint
-                align="right"
-                text="最近动态=成员改动记录;体检=自动检查行程冲突与遗漏;复盘=结束后的花费与总结;导出行程单=PDF/长图;生成PPT=幻灯片。"
-              />
+              <Transition name="scale-in">
+                <div v-if="desktopMore" class="card absolute right-0 top-11 z-40 w-56 p-1.5 shadow-pop">
+                  <button v-if="isSupabase" class="flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-[13.5px] text-ink-soft transition-colors hover:bg-surface-2" @click="desktopMore = false; openLogs()">
+                    <i class="fa-solid fa-clock-rotate-left w-4 text-primary" aria-hidden="true"></i>最近动态
+                    <span v-if="logsUnread" class="chip chip-rose ml-auto !px-1.5 !py-0 !text-[10px]">{{ logsUnread }}</span>
+                  </button>
+                  <button class="flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-[13.5px] text-ink-soft transition-colors hover:bg-surface-2" @click="desktopMore = false; showSearch = true">
+                    <i class="fa-solid fa-magnifying-glass w-4 text-primary" aria-hidden="true"></i>搜索
+                  </button>
+                  <button class="flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-[13.5px] text-ink-soft transition-colors hover:bg-surface-2" @click="desktopMore = false; showIssues = true">
+                    <i class="fa-solid fa-stethoscope w-4 text-primary" aria-hidden="true"></i>行程体检
+                  </button>
+                  <button class="flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-[13.5px] text-ink-soft transition-colors hover:bg-surface-2" @click="desktopMore = false; showReport = true">
+                    <i class="fa-solid fa-chart-pie w-4 text-primary" aria-hidden="true"></i>行程复盘
+                  </button>
+                  <button class="flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-[13.5px] text-ink-soft transition-colors hover:bg-surface-2" @click="desktopMore = false; backup.downloadPlan(plan.id)">
+                    <i class="fa-solid fa-file-arrow-down w-4 text-primary" aria-hidden="true"></i>导出数据
+                  </button>
+                  <button class="flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-[13.5px] text-ink-soft transition-colors hover:bg-surface-2" @click="desktopMore = false; sharePlan()">
+                    <i class="fa-solid fa-share-nodes w-4 text-primary" aria-hidden="true"></i>分享链接
+                  </button>
+                  <button v-if="canManage" class="flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-[13.5px] text-ink-soft transition-colors hover:bg-surface-2" @click="desktopMore = false; showPerm = true">
+                    <i class="fa-solid fa-user-shield w-4 text-primary" aria-hidden="true"></i>成员与权限
+                  </button>
+                  <button v-if="isOwner" class="flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-[13.5px] text-ink-soft transition-colors hover:bg-surface-2" @click="desktopMore = false; openEdit()">
+                    <i class="fa-solid fa-pen w-4 text-primary" aria-hidden="true"></i>编辑计划
+                  </button>
+                  <button v-if="isOwner" class="flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-[13.5px] text-ink-soft transition-colors hover:bg-surface-2" @click="desktopMore = false; doDuplicate()">
+                    <i class="fa-solid fa-copy w-4 text-primary" aria-hidden="true"></i>复制计划
+                  </button>
+                  <div class="my-1 h-px bg-line/70"></div>
+                  <button v-if="isOwner" class="flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-[13.5px] text-rose transition-colors hover:bg-rose/10" @click="desktopMore = false; showDelete = true">
+                    <i class="fa-solid fa-trash-can w-4" aria-hidden="true"></i>删除计划
+                  </button>
+                </div>
+              </Transition>
             </div>
           </div>
+
+          <Transition name="fade">
+            <div v-if="desktopMore" class="fixed inset-0 z-30 hidden lg:block" @click="desktopMore = false"></div>
+          </Transition>
 
           <!-- 概要统计小徽标 -->
           <div class="relative mt-6 flex flex-wrap gap-2">
@@ -522,6 +559,18 @@ onBeforeUnmount(() => {
           @click="showMore = false; showIssues = true"
         >
           <i class="fa-solid fa-stethoscope text-[18px] text-primary" aria-hidden="true"></i>行程体检
+        </button>
+        <button
+          class="flex flex-col items-center gap-2 rounded-[14px] bg-surface-2/70 py-4 text-[13px] font-semibold text-ink-soft transition active:scale-95"
+          @click="showMore = false; backup.downloadPlan(plan.id)"
+        >
+          <i class="fa-solid fa-file-arrow-down text-[18px] text-primary" aria-hidden="true"></i>导出数据
+        </button>
+        <button
+          class="flex flex-col items-center gap-2 rounded-[14px] bg-surface-2/70 py-4 text-[13px] font-semibold text-ink-soft transition active:scale-95"
+          @click="showMore = false; sharePlan()"
+        >
+          <i class="fa-solid fa-share-nodes text-[18px] text-primary" aria-hidden="true"></i>分享链接
         </button>
         <button
           class="flex flex-col items-center gap-2 rounded-[14px] bg-surface-2/70 py-4 text-[13px] font-semibold text-ink-soft transition active:scale-95"

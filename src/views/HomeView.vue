@@ -27,6 +27,7 @@ import ProgressBar from '@/components/ui/ProgressBar.vue'
 import CardSkeleton from '@/components/ui/CardSkeleton.vue'
 import { toast } from '@/composables/toast'
 import { isSupabase } from '@/api/supabase'
+import { useBackup } from '@/composables/backup'
 
 useHead({ title: '我的计划 · 兔兔同行自驾旅行企划' })
 
@@ -38,6 +39,26 @@ const route = useRoute()
 
 const progressMap = ref({}) // planId -> {done,total,pct}
 const today = todayISO()
+const backup = useBackup()
+const importing = ref(false)
+const importInput = ref(null)
+
+async function onImportFile(e) {
+  const file = e.target.files?.[0]
+  e.target.value = ''
+  if (!file || importing.value) return
+  importing.value = true
+  try {
+    const p = await backup.importFromFile(file)
+    toast('导入成功')
+    refreshAll()
+    router.push({ name: 'plan', params: { id: p.id } })
+  } catch (err) {
+    toast(err?.message || '导入失败', 'error')
+  } finally {
+    importing.value = false
+  }
+}
 
 /* ---------------- 计划卡片数据 ---------------- */
 async function refreshProgress() {
@@ -288,6 +309,15 @@ async function purgeOne(entry) {
             <button class="btn btn-primary btn-sm !rounded-[12px] !px-5 !py-3" @click="openCreate">
               <i class="fa-solid fa-plus" aria-hidden="true"></i>新建计划
             </button>
+            <button
+              class="btn btn-ghost btn-sm !rounded-[12px] !px-4 !py-3"
+              title="从备份文件导入计划"
+              :disabled="importing"
+              @click="importInput.click()"
+            >
+              <i :class="importing ? 'fa-solid fa-circle-notch' : 'fa-solid fa-file-arrow-up'" :style="importing ? 'animation: spin .8s linear infinite' : ''" aria-hidden="true"></i>导入
+            </button>
+            <input ref="importInput" type="file" accept="application/json,.json" class="hidden" @change="onImportFile" />
           </div>
         </section>
 
