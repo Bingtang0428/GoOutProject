@@ -198,6 +198,7 @@ create table if not exists public.invite_codes (
 alter table public.invite_codes add column if not exists grants jsonb not null default '[]'::jsonb;
 
 -- 账号(注册时由邀请码验证建立;之后用昵称+密码登录,不再需要邀请码)
+create schema if not exists extensions;
 create extension if not exists pgcrypto with schema extensions;
 
 create table if not exists public.accounts (
