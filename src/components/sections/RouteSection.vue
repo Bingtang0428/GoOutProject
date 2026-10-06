@@ -1279,6 +1279,7 @@ watch(
                           @change="(e) => store.updateDestinationFields(plan.id, day.date, d.id, { drive_min: e.target.value ? Number(e.target.value) : null })"
                         />
                         <span class="unit-suffix">分</span>
+                        <span v-if="d.drive_min > 60" class="muted text-[10.5px]">({{ fmtMinute(d.drive_min) }})</span>
                       </span>
                       <span v-else-if="d.mode === 'transit'" class="inline-flex items-center gap-1" title="公共交通大约多少分钟">
                         <i class="fa-solid fa-bus-simple text-[10px] text-amber/80" aria-hidden="true"></i>
@@ -1291,6 +1292,7 @@ watch(
                           @change="(e) => store.updateDestinationFields(plan.id, day.date, d.id, { transit_min: e.target.value ? Number(e.target.value) : null })"
                         />
                         <span class="unit-suffix">分</span>
+                        <span v-if="d.transit_min > 60" class="muted text-[10.5px]">({{ fmtMinute(d.transit_min) }})</span>
                       </span>
                       <span v-else class="inline-flex items-center gap-1" title="步行大约多少分钟">
                         <i class="fa-solid fa-person-walking text-[10px] text-primary/60" aria-hidden="true"></i>
@@ -1303,6 +1305,7 @@ watch(
                           @change="(e) => store.updateDestinationFields(plan.id, day.date, d.id, { walk_min: e.target.value ? Number(e.target.value) : null })"
                         />
                         <span class="unit-suffix">分</span>
+                        <span v-if="d.walk_min > 60" class="muted text-[10.5px]">({{ fmtMinute(d.walk_min) }})</span>
                       </span>
                       <button
                         class="btn btn-soft btn-sm !px-2.5 !py-0.5 !text-[11px]"
