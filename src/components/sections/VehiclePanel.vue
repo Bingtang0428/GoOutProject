@@ -32,7 +32,12 @@ watch(
   { immediate: true }
 )
 
-const logs = computed(() => store.rowsOf(props.plan.id, 'fuel').slice().sort((a, b) => (a.date || '').localeCompare(b.date || '')))
+const logs = computed(() => {
+  const list = store.rowsOf(props.plan.id, 'fuel').slice().sort((a, b) => (a.date || '').localeCompare(b.date || ''))
+  // 多车时按当前车辆过滤(单车/未选时显示全部)
+  if (vehicles.value.length <= 1 || !vehicleSel.value) return list
+  return list.filter((l) => l.vehicle_id === vehicleSel.value)
+})
 
 const people = computed(() => {
   const list = [...(props.plan.members || [])]
@@ -47,8 +52,7 @@ const people = computed(() => {
 import { makeUuid } from '@/utils/misc'
 
 const vehForm = reactive({
-  id: null, name: '', plate: '', power: 'gas',
-  capacity: '', cons: '', battery: '', kwh100: ''
+  id: null, name: '', plate: '', power: 'gas', fuelRange: '', evRange: ''
 })
 
 function loadDraft(v) {
@@ -56,10 +60,8 @@ function loadDraft(v) {
   vehForm.name = v?.name || ''
   vehForm.plate = v?.plate || ''
   vehForm.power = v?.power || 'gas'
-  vehForm.capacity = v?.capacity_l ? String(v.capacity_l) : ''
-  vehForm.cons = v?.cons_l100 ? String(v.cons_l100) : ''
-  vehForm.battery = v?.battery_kwh ? String(v.battery_kwh) : ''
-  vehForm.kwh100 = v?.kwh_100 ? String(v.kwh_100) : ''
+  vehForm.fuelRange = v?.fuel_range ? String(v.fuel_range) : ''
+  vehForm.evRange = v?.ev_range ? String(v.ev_range) : ''
 }
 
 watch(vehicle, (v) => loadDraft(v), { immediate: true })
@@ -73,10 +75,8 @@ async function saveVehicleInfo() {
     name: vehForm.name.trim(),
     plate: vehForm.plate.trim(),
     power: vehForm.power,
-    capacity_l: vehForm.power === 'ev' ? null : num(vehForm.capacity) > 0 ? num(vehForm.capacity) : null,
-    cons_l100: vehForm.power === 'ev' ? null : num(vehForm.cons) > 0 ? num(vehForm.cons) : null,
-    battery_kwh: vehForm.power === 'ev' ? (num(vehForm.battery) > 0 ? num(vehForm.battery) : null) : null,
-    kwh_100: vehForm.power === 'ev' ? (num(vehForm.kwh100) > 0 ? num(vehForm.kwh100) : null) : null
+    fuel_range: vehForm.power !== 'ev' && num(vehForm.fuelRange) > 0 ? num(vehForm.fuelRange) : null,
+    ev_range: vehForm.power !== 'gas' && num(vehForm.evRange) > 0 ? num(vehForm.evRange) : null
   })
   formDirty.value = false
 }
@@ -140,54 +140,47 @@ const unitShort = computed(() => (isEv.value ? 'kWh' : 'L'))
 const ADV_AVG_KMH = 65
 
 const fuelAdvice = computed(() => {
-  const minutes = store
-    .rowsOf(props.plan.id, 'days')
-    .reduce((sum, d) => sum + (d.destinations || []).reduce((s, x) => s + (Number(x.drive_min) || 0), 0), 0)
-  const daysList = store
-    .rowsOf(props.plan.id, 'days')
-    .map((d) => (d.destinations || []).reduce((s, x) => s + (Number(x.drive_min) || 0), 0))
+  const daysRows = store.rowsOf(props.plan.id, 'days')
+  const minutes = daysRows.reduce((sum, d) => sum + (d.destinations || []).reduce((s, x) => s + (Number(x.drive_min) || 0), 0), 0)
+  const perDay = daysRows.map((d) => (d.destinations || []).reduce((s, x) => s + (Number(x.drive_min) || 0), 0))
   const km = (minutes / 60) * ADV_AVG_KMH
-  const longestDayKm = (Math.max(0, ...daysList) / 60) * ADV_AVG_KMH
+  const longestDayKm = (Math.max(0, ...perDay) / 60) * ADV_AVG_KMH
   const tips = []
   if (!minutes) {
     tips.push('先在「路线」里为各段点「自动算时长」,这里就能给出加油/充电建议。')
     return { km: 0, need: 0, stops: 0, oneDayOk: true, tips }
   }
+  const power = vehicle.value?.power || 'gas'
+  const gasRange = Number(vehicle.value?.fuel_range) || 0
+  const evRange = Number(vehicle.value?.ev_range) || 0
 
-  if (isEv.value) {
-    // 纯电:按电池容量与电耗估算
-    const avg = Number(vehicle.value?.kwh_100) || (stats.value.chargeKwh && stats.value.km ? (stats.value.chargeKwh / Math.max(1, stats.value.km)) * 100 : 15)
-    const battery = Number(vehicle.value?.battery_kwh) || 60
-    const rangeKm = (battery * 100) / avg
-    const need = (km * avg) / 100
-    const stops = need > 0 ? Math.max(0, Math.ceil(need / (battery * 0.9)) - 1) : 0
-    tips.push(`全程约 ${Math.round(km)} km,预计耗电约 ${Math.round(need)} kWh —— 建议沿途规划 ${stops} 次补电${stops ? '(含快充)' : ''}。`)
-    tips.push(`满电续航约 ${Math.round(rangeKm)} km,最长单日 ${Math.round(longestDayKm)} km。`)
-    if (!vehicle.value?.battery_kwh) tips.push('电池容量未填,按常见 60 kWh 估算;填准后建议更准确。')
-    if (!vehicle.value?.kwh_100) tips.push('电耗未手填,按默认 15 kWh/100km 估算。')
-    return { km, need, stops, oneDayOk: longestDayKm <= rangeKm, tips }
+  if (power === 'ev') {
+    const range = evRange || 400
+    const stops = Math.max(0, Math.ceil(km / (range * 0.85)) - 1)
+    tips.push(`全程约 ${Math.round(km)} km,满电续航约 ${Math.round(range)} km —— ${stops > 0 ? `建议沿途补电约 ${stops} 次` : '满电基本够用' }。`)
+    tips.push(longestDayKm > range ? `最长单日约 ${Math.round(longestDayKm)} km,超出满电续航,那天中途记得补电。` : `最长单日约 ${Math.round(longestDayKm)} km,单日无忧。`)
+    if (!evRange) tips.push('未填「满电续航」,按常见 400 km 估算;填准后建议更准确。')
+    return { km, need: 0, stops, oneDayOk: longestDayKm <= range, tips }
   }
 
-  // 燃油 / 混动:烧油部分按油耗估算
-  const avgLiters = Number(vehicle.value?.cons_l100) || stats.value.avgLiters || 9
-  const capacity = Number(vehicle.value?.capacity_l) || 50
-  const need = (km * avgLiters) / 100
-  const rangeKm = (capacity * 100) / avgLiters
-  const usable = capacity * 0.85 // 不建议烧干油箱
-  const stops = need > 0 ? Math.max(0, Math.ceil(need / usable) - 1) : 0
-  const oneDayOk = longestDayKm <= rangeKm
-  tips.push(
-    stops > 0
-      ? `全程约 ${Math.round(km)} km,预计耗油约 ${Math.round(need)} L —— 建议沿途安排约 ${stops} 次加油。`
-      : `全程约 ${Math.round(km)} km,一箱油(按 ${capacity} L)基本够用,出发前加满即可。`
-  )
-  tips.push(oneDayOk ? `满箱续航约 ${Math.round(rangeKm)} km,最长单日 ${Math.round(longestDayKm)} km,单日无忧。` : `最长单日行驶约 ${Math.round(longestDayKm)} km,超出满箱续航,那天中途记得补油。`)
-  if (!vehicle.value?.cons_l100) tips.push(`油耗未手填,按记录测算 ${stats.value.avgLiters ? stats.value.avgLiters.toFixed(1) : '默认 9'} L/100km 估算。`)
-  if (!vehicle.value?.capacity_l) tips.push(`油箱容积未填,按常见 ${capacity} L 估算。`)
-  if (vehicle.value?.power === 'hybrid' && stats.value.chargeKwh) {
-    tips.push(`混动额外充电 ${Math.round(stats.value.chargeKwh)} kWh(花费 ¥${Math.round(stats.value.chargeCost)}),可计入总费用。`)
+  if (power === 'hybrid') {
+    const fr = gasRange || 500
+    const er = evRange || 0
+    const total = fr + er
+    const stops = Math.max(0, Math.ceil(km / (total * 0.85)) - 1)
+    tips.push(`混动:燃油续航约 ${gasRange || '—'} km + 电续航约 ${evRange || '—'} km,合计约 ${Math.round(total)} km。`)
+    tips.push(`全程约 ${Math.round(km)} km —— ${stops > 0 ? `建议沿途补能约 ${stops} 次(油/电均可)` : '一箱油 + 满电基本够用'}。`)
+    tips.push(longestDayKm > total ? `最长单日约 ${Math.round(longestDayKm)} km,建议当天中途补能。` : `最长单日约 ${Math.round(longestDayKm)} km,单日无忧。`)
+    if (!gasRange && !evRange) tips.push('未填续航,按燃油 500 km 估算。')
+    return { km, need: 0, stops, oneDayOk: longestDayKm <= total, tips }
   }
-  return { km, need, stops, oneDayOk, tips }
+
+  const range = gasRange || 500
+  const stops = Math.max(0, Math.ceil(km / (range * 0.85)) - 1)
+  tips.push(stops > 0 ? `全程约 ${Math.round(km)} km,满油续航约 ${Math.round(range)} km —— 建议沿途安排约 ${stops} 次加油。` : `全程约 ${Math.round(km)} km,满油续航约 ${Math.round(range)} km,基本一箱够用,出发前加满即可。`)
+  tips.push(longestDayKm > range ? `最长单日约 ${Math.round(longestDayKm)} km,超出满油续航,那天中途记得加油。` : `最长单日约 ${Math.round(longestDayKm)} km,单日无忧。`)
+  if (!gasRange) tips.push('未填「满油续航」,按常见 500 km 估算;填准后建议更准确。')
+  return { km, need: 0, stops, oneDayOk: longestDayKm <= range, tips }
 })
 
 /* ---------- 加油/充电记录 ---------- */
@@ -309,12 +302,10 @@ async function saveFuel() {
           <input v-model="vehForm.name" class="field !w-40 !py-1.5 !text-[13px]" placeholder="爱车昵称" />
           <input v-model="vehForm.plate" class="field !w-32 !py-1.5 !text-[13px]" placeholder="车牌号" />
           <template v-if="vehForm.power !== 'ev'">
-            <input v-model="vehForm.capacity" type="number" min="0" class="field !w-24 !py-1.5 !text-[13px]" placeholder="油箱L" title="油箱容积(续航建议用)" />
-            <input v-model="vehForm.cons" type="number" min="0" step="0.1" class="field !w-24 !py-1.5 !text-[13px]" placeholder="油耗L/100km" />
+            <input v-model="vehForm.fuelRange" type="number" min="0" class="field !w-32 !py-1.5 !text-[13px]" placeholder="满油续航 km" title="加满油大约能跑多少公里" />
           </template>
-          <template v-else>
-            <input v-model="vehForm.battery" type="number" min="0" class="field !w-24 !py-1.5 !text-[13px]" placeholder="电池kWh" />
-            <input v-model="vehForm.kwh100" type="number" min="0" step="0.1" class="field !w-24 !py-1.5 !text-[13px]" placeholder="电耗kWh/100km" />
+          <template v-if="vehForm.power !== 'gas'">
+            <input v-model="vehForm.evRange" type="number" min="0" class="field !w-32 !py-1.5 !text-[13px]" placeholder="满电续航 km" title="充满电大约能跑多少公里" />
           </template>
           <BaseButton size="sm" icon="fa-check" @click="saveVehicleInfo">保存</BaseButton>
         </div>
@@ -323,8 +314,8 @@ async function saveFuel() {
         <template v-if="vehicle">
           {{ vehicle?.plate || '未填车牌号' }}
           · {{ vehicle?.power === 'ev' ? '纯电' : vehicle?.power === 'hybrid' ? '混动' : '燃油' }}
-          <template v-if="vehicle?.capacity_l"> · 油箱 {{ vehicle.capacity_l }} L</template>
-          <template v-if="vehicle?.battery_kwh"> · 电池 {{ vehicle.battery_kwh }} kWh</template>
+          <template v-if="vehicle?.fuel_range"> · 满油续航 {{ vehicle.fuel_range }} km</template>
+          <template v-if="vehicle?.ev_range"> · 满电续航 {{ vehicle.ev_range }} km</template>
         </template>
         <template v-else>等待创建者添加车辆</template>
       </p>

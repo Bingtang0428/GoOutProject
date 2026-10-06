@@ -1380,6 +1380,7 @@ export const useContentStore = defineStore('content', () => {
     await remoteWrite(planId, 'vehicles', 'vehicle', {
       id: makeUuid(), plan_id: planId, name: '', plate: '',
       power: 'gas', capacity_l: null, cons_l100: null, battery_kwh: null, kwh_100: null,
+      fuel_range: null, ev_range: null,
       ...row, created_at: new Date().toISOString()
     })
     return row

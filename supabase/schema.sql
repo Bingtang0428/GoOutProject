@@ -393,6 +393,8 @@ create table if not exists public.vehicles (
 );
 alter table public.vehicles add column if not exists capacity_l numeric(6,2);
 alter table public.vehicles add column if not exists cons_l100 numeric(6,2);
+alter table public.vehicles add column if not exists fuel_range numeric(8,1); -- 满油续航 km
+alter table public.vehicles add column if not exists ev_range numeric(8,1);   -- 满电续航 km
 
 -- 加油/里程记录(油耗按相邻记录里程差计算)
 create table if not exists public.fuel_logs (
