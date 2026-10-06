@@ -207,7 +207,6 @@ const showPerm = ref(false)
 const showExport = ref(false)
 const showPpt = ref(false)
 const showSearch = ref(false)
-const desktopMore = ref(false)
 const showLogs = ref(false)
 const showReport = ref(false)
 const showMemory = ref(false)
@@ -404,7 +403,7 @@ onBeforeUnmount(() => {
               </button>
             </div>
 
-            <!-- 桌面操作(次级操作收进「更多」下拉,减少拥挤) -->
+            <!-- 桌面操作:主操作 + 「更多」弹窗(避免被 Hero 的 overflow-hidden 裁剪) -->
             <div class="relative hidden flex-wrap items-center gap-2 lg:flex">
               <button class="btn btn-ghost btn-sm hero-surface" @click="showExport = true">
                 <i class="fa-solid fa-file-export" aria-hidden="true"></i>导出行程单
@@ -412,52 +411,12 @@ onBeforeUnmount(() => {
               <button class="btn btn-primary btn-sm" @click="showPpt = true">
                 <i class="fa-solid fa-file-powerpoint" aria-hidden="true"></i>生成 PPT
               </button>
-              <button class="btn btn-ghost btn-sm hero-surface" @click="desktopMore = !desktopMore">
+              <button class="btn btn-ghost btn-sm hero-surface relative" @click="showMore = true">
                 <i class="fa-solid fa-ellipsis" aria-hidden="true"></i>更多
-                <span v-if="logsUnread" class="h-1.5 w-1.5 rounded-full bg-rose"></span>
+                <span v-if="logsUnread" class="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-rose"></span>
               </button>
-              <Transition name="scale-in">
-                <div v-if="desktopMore" class="card absolute right-0 top-11 z-40 max-h-[70vh] w-56 overflow-y-auto overscroll-contain p-1.5 shadow-pop">
-                  <button v-if="isSupabase" class="flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-[13.5px] text-ink-soft transition-colors hover:bg-surface-2" @click="desktopMore = false; openLogs()">
-                    <i class="fa-solid fa-clock-rotate-left w-4 text-primary" aria-hidden="true"></i>最近动态
-                    <span v-if="logsUnread" class="chip chip-rose ml-auto !px-1.5 !py-0 !text-[10px]">{{ logsUnread }}</span>
-                  </button>
-                  <button class="flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-[13.5px] text-ink-soft transition-colors hover:bg-surface-2" @click="desktopMore = false; showSearch = true">
-                    <i class="fa-solid fa-magnifying-glass w-4 text-primary" aria-hidden="true"></i>搜索
-                  </button>
-                  <button class="flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-[13.5px] text-ink-soft transition-colors hover:bg-surface-2" @click="desktopMore = false; showIssues = true">
-                    <i class="fa-solid fa-stethoscope w-4 text-primary" aria-hidden="true"></i>行程体检
-                  </button>
-                  <button class="flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-[13.5px] text-ink-soft transition-colors hover:bg-surface-2" @click="desktopMore = false; showReport = true">
-                    <i class="fa-solid fa-chart-pie w-4 text-primary" aria-hidden="true"></i>行程复盘
-                  </button>
-                  <button class="flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-[13.5px] text-ink-soft transition-colors hover:bg-surface-2" @click="desktopMore = false; backup.downloadPlan(plan.id)">
-                    <i class="fa-solid fa-file-arrow-down w-4 text-primary" aria-hidden="true"></i>导出数据
-                  </button>
-                  <button class="flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-[13.5px] text-ink-soft transition-colors hover:bg-surface-2" @click="desktopMore = false; sharePlan()">
-                    <i class="fa-solid fa-share-nodes w-4 text-primary" aria-hidden="true"></i>分享链接
-                  </button>
-                  <button v-if="canManage" class="flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-[13.5px] text-ink-soft transition-colors hover:bg-surface-2" @click="desktopMore = false; showPerm = true">
-                    <i class="fa-solid fa-user-shield w-4 text-primary" aria-hidden="true"></i>成员与权限
-                  </button>
-                  <button v-if="isOwner" class="flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-[13.5px] text-ink-soft transition-colors hover:bg-surface-2" @click="desktopMore = false; openEdit()">
-                    <i class="fa-solid fa-pen w-4 text-primary" aria-hidden="true"></i>编辑计划
-                  </button>
-                  <button v-if="isOwner" class="flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-[13.5px] text-ink-soft transition-colors hover:bg-surface-2" @click="desktopMore = false; doDuplicate()">
-                    <i class="fa-solid fa-copy w-4 text-primary" aria-hidden="true"></i>复制计划
-                  </button>
-                  <div class="my-1 h-px bg-line/70"></div>
-                  <button v-if="isOwner" class="flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-[13.5px] text-rose transition-colors hover:bg-rose/10" @click="desktopMore = false; showDelete = true">
-                    <i class="fa-solid fa-trash-can w-4" aria-hidden="true"></i>删除计划
-                  </button>
-                </div>
-              </Transition>
             </div>
           </div>
-
-          <Transition name="fade">
-            <div v-if="desktopMore" class="fixed inset-0 z-30 hidden lg:block" @click="desktopMore = false"></div>
-          </Transition>
 
           <!-- 概要统计小徽标 -->
           <div class="relative mt-6 flex flex-wrap gap-2">
@@ -561,6 +520,12 @@ onBeforeUnmount(() => {
           @click="showMore = false; showPpt = true"
         >
           <i class="fa-solid fa-file-powerpoint text-[18px] text-primary" aria-hidden="true"></i>生成 PPT
+        </button>
+        <button
+          class="flex flex-col items-center gap-2 rounded-[14px] bg-surface-2/70 py-4 text-[13px] font-semibold text-ink-soft transition active:scale-95"
+          @click="showMore = false; showSearch = true"
+        >
+          <i class="fa-solid fa-magnifying-glass text-[18px] text-primary" aria-hidden="true"></i>搜索
         </button>
         <button
           class="flex flex-col items-center gap-2 rounded-[14px] bg-surface-2/70 py-4 text-[13px] font-semibold text-ink-soft transition active:scale-95"
