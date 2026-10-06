@@ -42,6 +42,7 @@ import PptSheet from '@/components/plan/PptSheet.vue'
 import GlobalSearch from '@/components/plan/GlobalSearch.vue'
 import ReportSheet from '@/components/plan/ReportSheet.vue'
 import { toast } from '@/composables/toast'
+import { showNotify } from '@/composables/notify'
 import MemorySheet from '@/components/plan/MemorySheet.vue'
 import IssuesSheet from '@/components/plan/IssuesSheet.vue'
 
@@ -149,6 +150,20 @@ async function loadPlan() {
   contentStore.ensureStayVoteReminders(plan.value.id, plan.value.members || []) // 未定住宿自动提醒投票
   checkLogsUnread()
   if (!logsTimer) logsTimer = setInterval(checkLogsUnread, 60000)
+  setTimeout(notifyTodayReminders, 1000) // 本机通知今天未读提醒(授权后)
+}
+
+/** 今日未读提醒 → 本机通知(每天一次) */
+function notifyTodayReminders() {
+  const p = plan.value
+  if (!p) return
+  const today = todayISO()
+  const key = `tx:notified:${p.id}:${today}`
+  if (localStorage.getItem(key)) return
+  const list = contentStore.rowsOf(p.id, 'reminders').filter((r) => r.date === today && !contentStore.reminderClosed(r))
+  if (!list.length) return
+  const ok = showNotify(`今天有 ${list.length} 条提醒`, list.map((r) => r.title).slice(0, 3).join('、'))
+  if (ok) localStorage.setItem(key, '1')
 }
 watch(
   [() => route.params.id, () => plan.value?.start_date, () => plan.value?.end_date],

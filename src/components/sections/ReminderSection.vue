@@ -9,10 +9,12 @@ import { useContentStore } from '@/stores/content'
 import { useAuthStore } from '@/stores/auth'
 import { groupReminders, fmtDay, todayISO } from '@/utils/date'
 import { memberOf } from '@/utils/misc'
+import { notifySupported, notifyPermission, requestNotify } from '@/composables/notify'
 import BaseModal from '@/components/ui/BaseModal.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import Avatar from '@/components/ui/Avatar.vue'
+import { toast } from '@/composables/toast'
 
 const props = defineProps({
   plan: { type: Object, required: true },
@@ -111,6 +113,16 @@ function groupTone(key) {
   if (key === 'earlier') return 'rose'
   return 'plain'
 }
+
+/* 浏览器通知授权 */
+const canNotify = notifySupported()
+const notifyPerm = ref(notifyPermission())
+async function enableNotify() {
+  const r = await requestNotify()
+  notifyPerm.value = r
+  if (r === 'granted') toast('已开启浏览器通知 —— 今天有提醒时会通知你')
+  else if (r === 'denied') toast('通知被拒绝,可在浏览器设置里开启', 'error')
+}
 </script>
 
 <template>
@@ -130,6 +142,9 @@ function groupTone(key) {
         </p>
       </div>
       <div class="flex items-center gap-2">
+        <BaseButton v-if="canNotify && notifyPerm !== 'granted'" variant="ghost" size="sm" icon="fa-bell" @click="enableNotify">
+          开启通知
+        </BaseButton>
         <BaseButton v-if="canEdit && unreadCount" variant="ghost" size="sm" @click="markAllMine">
           <i class="fa-solid fa-check-double" aria-hidden="true"></i>我全部已读
         </BaseButton>
