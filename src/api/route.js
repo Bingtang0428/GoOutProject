@@ -199,14 +199,14 @@ export function transitMinutes(drivingMin) {
   return Math.max(15, Math.round(drivingMin * 1.25 + 40))
 }
 
-/** 中段表述,如 “自驾约 1 小时 20 分” */
+/** 时长文案,如 “1小时20分” / “45分钟” */
 export function fmtMinute(min) {
   if (!min) return ''
-  const m = Number(min)
+  const m = Math.round(Number(min))
   const h = Math.floor(m / 60)
   const rest = m % 60
-  if (h === 0) return `${m} 分钟`
-  return rest ? `${h} 小时 ${rest} 分` : `${h} 小时`
+  if (h === 0) return `${m}分钟`
+  return rest ? `${h}小时${rest}分` : `${h}小时`
 }
 
 /**

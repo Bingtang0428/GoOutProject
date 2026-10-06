@@ -10,7 +10,7 @@ import { useContentStore } from '@/stores/content'
 import { fmtDay, fmtRange, fmtSavedAt, todayISO, relKey } from '@/utils/date'
 import { pastelOf } from '@/utils/misc'
 import { money as fmtMoney } from '@/utils/money'
-import { fmtTransitSteps } from '@/api/route'
+import { fmtTransitSteps, fmtMinute } from '@/api/route'
 import InfoHint from '@/components/ui/InfoHint.vue'
 
 const props = defineProps({
@@ -63,10 +63,10 @@ const todos = computed(() => content.rowsOf(props.plan.id, 'todos'))
 
 /** 某目的地的「上一站→本站」路程描述 */
 function legText(x) {
-  if (x.mode === 'walk' && x.walk_min) return `步行约 ${x.walk_min} 分钟${x.distance_km ? ' · ' + x.distance_km + 'km' : ''}`
+  if (x.mode === 'walk' && x.walk_min) return `步行约 ${fmtMinute(x.walk_min)}${x.distance_km ? ' · ' + x.distance_km + 'km' : ''}`
   if (x.mode === 'transit' && x.transit_detail?.length) return fmtTransitSteps(x.transit_detail)
-  if (x.mode === 'transit' && x.transit_min) return `公交约 ${x.transit_min} 分钟`
-  if (x.drive_min) return `自驾约 ${x.drive_min} 分钟${x.distance_km ? ' · ' + x.distance_km + 'km' : ''}`
+  if (x.mode === 'transit' && x.transit_min) return `公交约 ${fmtMinute(x.transit_min)}`
+  if (x.drive_min) return `自驾约 ${fmtMinute(x.drive_min)}${x.distance_km ? ' · ' + x.distance_km + 'km' : ''}`
   return ''
 }const transits = computed(() => content.rowsOf(props.plan.id, 'transits'))
 const reminders = computed(() => content.rowsOf(props.plan.id, 'reminders'))

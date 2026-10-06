@@ -535,9 +535,7 @@ function setMapDay(n) {
 }
 
 function fmtHours(min) {
-  if (!min) return '0 分钟'
-  const h = Math.floor(min / 60)
-  return h ? `${h} 小时 ${min % 60} 分` : `${min} 分钟`
+  return fmtMinute(min) || '0分钟'
 }
 
 /** 该段是否已有真实路网折线(dest 上的 drive_geo,WGS84) */
@@ -1339,7 +1337,7 @@ watch(
                             <template v-if="s.from"> · 「{{ s.from }}」上车</template>
                             <template v-if="s.to"> → 「{{ s.to }}」下车</template>
                             <template v-if="s.via_stops"> · 经 {{ s.via_stops }} 站</template>
-                            <template v-if="s.min"> · 约 {{ s.min }} 分钟</template>
+                            <template v-if="s.min"> · 约 {{ fmtMinute(s.min) }}</template>
                             <span v-if="si < rideSteps(d).length - 1" class="chip chip-plain ml-1 !px-1.5 !py-0 !text-[10px]">换乘</span>
                           </span>
                         </li>
