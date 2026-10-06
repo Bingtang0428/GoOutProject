@@ -24,6 +24,7 @@ import EmptyState from '@/components/ui/EmptyState.vue'
 import Avatar from '@/components/ui/Avatar.vue'
 import GeoPlacePicker from '@/components/ui/GeoPlacePicker.vue'
 import InfoHint from '@/components/ui/InfoHint.vue'
+import { toast } from '@/composables/toast'
 import 'leaflet/dist/leaflet.css'
 
 const props = defineProps({
@@ -713,6 +714,28 @@ const showAdd = ref(false)
 const savingDest = ref(false)
 const presence = usePresenceStore()
 watch(showAdd, (v) => presence.setEditing(v ? 'route' : null))
+
+/* 日期整理(手动修复错位的日期) */
+const showTidy = ref(false)
+const allDays = computed(() =>
+  store.rowsOf(props.plan.id, 'days').slice().sort((a, b) => a.date.localeCompare(b.date))
+)
+function inRange(date) {
+  return date >= props.plan.start_date && date <= props.plan.end_date
+}
+async function tidyAlign() {
+  const n = await store.remapDayDates(props.plan)
+  toast(n ? `已把前 ${n} 天按顺序对齐到行程日期` : '没有可对齐的内容')
+}
+async function onSetDayDate(day, e) {
+  const v = e.target.value
+  if (!v) return
+  const ok = await store.setDayDate(props.plan.id, day.id, v)
+  if (!ok) toast('该日期已存在安排,请先处理冲突', 'error')
+}
+function onDeleteDay(day) {
+  store.deleteDayRow(props.plan.id, day.id)
+}
 const destEdit = ref(null) // {day, dest} | null(null=新增)
 const destForm = reactive({ date: '', geo: null, time: '', note: '', driveMin: '', mode: 'car' })
 
@@ -1029,6 +1052,7 @@ watch(
             <i class="fa-solid fa-map" aria-hidden="true"></i>地图
           </button>
         </div>
+        <BaseButton v-if="canEdit" variant="ghost" icon="fa-calendar-days" @click="showTidy = true">日期整理</BaseButton>
         <BaseButton v-if="canEdit" icon="fa-plus" @click="chooseFirstFreeDay()">添加地点</BaseButton>
       </div>
     </div>
@@ -1662,6 +1686,46 @@ watch(
         </BaseButton>
         <BaseButton variant="ghost" @click="planBShow = false">取消</BaseButton>
         <BaseButton icon="fa-flag" :disabled="!planBText.trim()" @click="savePlanB">保存预案</BaseButton>
+      </template>
+    </BaseModal>
+
+    <!-- 日期整理(手动修复错位日期) -->
+    <BaseModal v-model="showTidy" title="日期整理" :max-width="'540px'">
+      <p class="muted -mt-1 mb-3 text-[12.5px] leading-relaxed">
+        行程日期:{{ plan.start_date }} ~ {{ plan.end_date }}。若改过日期导致安排错位,可点「按顺序对齐」把现有各天依次对到行程日期,或逐条改日期/删除。
+      </p>
+      <BaseButton class="mb-3" variant="soft" icon="fa-wand-magic-sparkles" @click="tidyAlign">
+        按顺序对齐到行程日期
+      </BaseButton>
+      <div class="max-h-[50vh] space-y-1.5 overflow-y-auto">
+        <div
+          v-for="(d, i) in allDays"
+          :key="d.id"
+          class="flex flex-wrap items-center gap-2 rounded-[10px] bg-surface-2/60 px-3 py-2"
+        >
+          <span class="w-5 shrink-0 text-center text-[12px] text-muted">{{ i + 1 }}</span>
+          <input
+            type="date"
+            :value="d.date"
+            class="field !w-auto !px-2 !py-1 text-[12px]"
+            @change="onSetDayDate(d, $event)"
+          />
+          <span
+            class="chip shrink-0 !px-2 !py-0 !text-[10.5px]"
+            :class="inRange(d.date) ? 'chip-plain' : 'chip-rose'"
+          >
+            <template v-if="inRange(d.date)">范围内 · {{ (d.destinations || []).length }} 地点</template>
+            <template v-else>超出范围 · {{ (d.destinations || []).length }} 地点</template>
+          </span>
+          <span v-if="d.title" class="muted min-w-0 flex-1 truncate text-[11.5px]">{{ d.title }}</span>
+          <button class="icon-btn icon-btn-danger !h-7 !w-7 shrink-0" title="删除该天" @click="onDeleteDay(d)">
+            <i class="fa-solid fa-trash-can text-[11px]" aria-hidden="true"></i>
+          </button>
+        </div>
+        <p v-if="!allDays.length" class="muted py-4 text-center text-[12.5px]">暂无日期行</p>
+      </div>
+      <template #footer>
+        <BaseButton variant="ghost" @click="showTidy = false">完成</BaseButton>
       </template>
     </BaseModal>
   </section>

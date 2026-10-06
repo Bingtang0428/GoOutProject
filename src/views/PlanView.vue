@@ -148,9 +148,6 @@ async function loadPlan() {
   if (prevPlanId && changedPlan) contentStore.detachRemote(prevPlanId)
   prevPlanId = plan.value.id
   await contentStore.ensureLoaded(plan.value)
-  // 已有安排按顺序对齐到当前日期区间(改过出发/返程日期时把内容落到新日期)
-  const moved = await contentStore.alignDatesToPlan(plan.value)
-  if (moved) toast('已把原有安排按天对齐到新日期')
   await contentStore.ensureDayRows(plan.value) // 日期区间变化时补齐每日占位
   await contentStore.ensureDriveDayRows(plan.value) // 自驾规划同样按日占位
   contentStore.ensureStayVoteReminders(plan.value.id, plan.value.members || []) // 未定住宿自动提醒投票

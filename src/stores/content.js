@@ -645,6 +645,94 @@ export const useContentStore = defineStore('content', () => {
     return Math.max(daysData.length, driveData.length)
   }
 
+  /** 修改某一天的日期(手动整理);目标日期已有安排时返回 false */
+  async function setDayDate(planId, id, newDate) {
+    if (!newDate) return false
+    const row = (rows[planId]?.days || []).find((r) => r.id === id)
+    if (!row) return false
+    if (!isSupabase) {
+      await persistLocal(planId, 'days', (l) => {
+        const t = l.find((r) => r.id === id)
+        if (t) t.date = newDate
+      })
+      return true
+    }
+    const { data, error } = await supabase.from('route_days').update({ date: newDate }).eq('id', id).select()
+    if (error || !data?.[0]) return false
+    applyById(planId, 'days', data[0])
+    return true
+  }
+
+  /** 删除某天的路线行(手动整理) */
+  function deleteDayRow(planId, id) {
+    return remoteDelete(planId, 'route_days', 'days', id)
+  }
+
+  /**
+   * 手动「按顺序对齐」:把现有日期行按 date 升序,依次对到计划日期区间;
+   * 清掉空白行;多余行保持原位(不删)。返回对齐行数。
+   */
+  async function remapDayDates(plan) {
+    const range = eachDayISO(plan.start_date, plan.end_date)
+    if (!range.length) return 0
+    const list = (rows[plan.id]?.days || []).slice()
+    if (!list.length) return 0
+    const addDays = (d, n) => {
+      const t = new Date(d + 'T00:00:00Z')
+      t.setUTCDate(t.getUTCDate() + n)
+      return t.toISOString().slice(0, 10)
+    }
+    const isBlank = (r) => !(r.destinations || []).length && !r.memo && !r.plan_b && !r.title
+    const sorted = list.slice().sort((a, b) => a.date.localeCompare(b.date))
+    const n = Math.min(sorted.length, range.length)
+    const mapped = sorted.slice(0, n)
+    if (!n) return 0
+    if (isSupabase) {
+      for (let i = 0; i < mapped.length; i++) {
+        await supabase.from('route_days').update({ date: addDays('2099-01-01', i) }).eq('id', mapped[i].id)
+      }
+      for (const b of list.filter(isBlank)) {
+        await supabase.from('route_days').delete().eq('id', b.id)
+      }
+      for (let i = 0; i < mapped.length; i++) {
+        const { data } = await supabase.from('route_days').update({ date: range[i] }).eq('id', mapped[i].id).select()
+        if (data?.[0]) applyById(plan.id, 'days', data[0])
+      }
+    } else {
+      const target = new Map(mapped.map((r, i) => [r.id, range[i]]))
+      const kept = list.filter((r) => !isBlank(r)).map((r) => (target.has(r.id) ? { ...r, date: target.get(r.id) } : r))
+      localDb.saveContent(plan.id, 'days', kept)
+      rows[plan.id].days = kept
+    }
+
+    // 自驾日同样按序对齐
+    const dlist = (rows[plan.id]?.drive || []).slice()
+    const dBlank = (r) => !(r.legs || []).length && !r.title
+    const dSorted = dlist.slice().sort((a, b) => a.date.localeCompare(b.date))
+    const dn = Math.min(dSorted.length, range.length)
+    if (dn) {
+      const dMapped = dSorted.slice(0, dn)
+      if (isSupabase) {
+        for (let i = 0; i < dn; i++) {
+          await supabase.from('drive_days').update({ date: addDays('2099-01-01', i) }).eq('id', dMapped[i].id)
+        }
+        for (const b of dlist.filter(dBlank)) {
+          await supabase.from('drive_days').delete().eq('id', b.id)
+        }
+        for (let i = 0; i < dn; i++) {
+          const { data } = await supabase.from('drive_days').update({ date: range[i] }).eq('id', dMapped[i].id).select()
+          if (data?.[0]) applyById(plan.id, 'drive', data[0])
+        }
+      } else {
+        const tmap = new Map(dMapped.map((r, i) => [r.id, range[i]]))
+        const kept = dlist.filter((r) => !dBlank(r)).map((r) => (tmap.has(r.id) ? { ...r, date: tmap.get(r.id) } : r))
+        localDb.saveContent(plan.id, 'drive', kept)
+        rows[plan.id].drive = kept
+      }
+    }
+    return mapped.length
+  }
+
   // ------------------------------------------------------------
   // 路线
   // ------------------------------------------------------------
@@ -1691,6 +1779,9 @@ export const useContentStore = defineStore('content', () => {
     exportRows,
     importRows,
     alignDatesToPlan,
+    setDayDate,
+    deleteDayRow,
+    remapDayDates,
     addDestination,
     removeDestination,
     updateDayTitle,
