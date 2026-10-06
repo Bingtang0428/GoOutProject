@@ -560,70 +560,89 @@ export const useContentStore = defineStore('content', () => {
   }
 
   /**
-   * 计划起止日期整体平移:把已有安排(路线/自驾/评论/相册)按「同一偏移」挪到新日期。
-   * 依据开始日期的天数差 delta 平移,避免逐条丢失。
+   * 改了出发/返程日期后,把已有安排整体平移到新日期区间。
+   * 触发条件:存在内容且其中有日期超出 [start, end](说明窗口移动了)。
+   * 偏移量 = 新出发日 − 最早内容日期;先腾到临时日期再落位,规避 (plan_id,date) 唯一约束冲突。
+   * 返回移动的「天」数。
    */
-  async function shiftDates(planId, oldStart, newStart) {
-    if (!oldStart || !newStart || oldStart === newStart) return false
-    const delta = Math.round((Date.parse(newStart + 'T00:00:00Z') - Date.parse(oldStart + 'T00:00:00Z')) / 86400000)
-    if (!delta) return false
-    ensureBucket(planId)
-    const shift = (d) => {
+  async function alignDatesToPlan(plan) {
+    if (!plan?.id || !plan.start_date || !plan.end_date) return 0
+    ensureBucket(plan.id)
+    const start = plan.start_date
+    const end = plan.end_date
+    const addDays = (d, n) => {
       const t = new Date(d + 'T00:00:00Z')
-      t.setUTCDate(t.getUTCDate() + delta)
+      t.setUTCDate(t.getUTCDate() + n)
       return t.toISOString().slice(0, 10)
     }
-    const map = new Map()
-    const daysList = (rows[planId].days || []).slice()
-    for (const r of daysList) map.set(r.date, shift(r.date))
+    const diffDays = (a, b) => Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 86400000)
 
-    // 路线日:从远端往近端改,规避 (plan_id,date) 唯一约束的瞬时冲突
-    const ordered = daysList.sort((a, b) => (delta > 0 ? b.date.localeCompare(a.date) : a.date.localeCompare(b.date)))
-    for (const r of ordered) {
-      const nd = shift(r.date)
-      if (!nd || nd === r.date) continue
-      if (!isSupabase) {
-        r.date = nd
+    const daysHasData = (d) =>
+      (d.destinations || []).length > 0 || (d.memo || '') !== '' || (d.plan_b || '') !== '' || (d.title || '') !== ''
+    const driveHasData = (d) => (d.legs || []).length > 0 || (d.title || '') !== ''
+
+    const daysData = (rows[plan.id].days || []).filter(daysHasData)
+    const driveData = (rows[plan.id].drive || []).filter(driveHasData)
+    const allDates = [...daysData.map((d) => d.date), ...driveData.map((d) => d.date)]
+    if (!allDates.length) return 0
+    const outOfRange = allDates.some((d) => d && (d < start || d > end))
+    if (!outOfRange) return 0
+    const earliest = allDates.slice().sort()[0]
+    const delta = diffDays(earliest, start)
+    if (!delta) return 0
+
+    const shiftList = async (storeKey, table, dataRows, hasData) => {
+      const list = rows[plan.id][storeKey] || []
+      const targets = dataRows.map((r) => addDays(r.date, delta))
+      const oldDates = new Set(dataRows.map((r) => r.date))
+      if (isSupabase) {
+        // 1) 腾到临时日期
+        for (let i = 0; i < dataRows.length; i++) {
+          await supabase.from(table).update({ date: addDays('2099-01-01', i) }).eq('id', dataRows[i].id)
+        }
+        // 2) 删除空占位行,释放目标日期
+        for (const b of list.filter((r) => !hasData(r))) {
+          await supabase.from(table).delete().eq('id', b.id)
+        }
+        // 3) 落到目标日期
+        for (let i = 0; i < dataRows.length; i++) {
+          const { data } = await supabase.from(table).update({ date: targets[i] }).eq('id', dataRows[i].id).select()
+          if (data?.[0]) Object.assign(dataRows[i], data[0])
+          else dataRows[i].date = targets[i]
+        }
       } else {
-        const { data, error } = await supabase.from('route_days').update({ date: nd }).eq('id', r.id).select()
-        if (error) console.warn('[content] 迁移路线日期失败:', error.message)
-        else if (data?.[0]) Object.assign(r, data[0])
+        const blanks = new Set(list.filter((r) => !hasData(r)).map((r) => r.id))
+        rows[plan.id][storeKey] = list
+          .filter((r) => !blanks.has(r.id))
+          .map((r) => (oldDates.has(r.date) ? { ...r, date: addDays(r.date, delta) } : r))
       }
+      return oldDates
     }
-    // 自驾日
-    const driveList = (rows[planId].drive || []).slice()
-    const dorder = driveList.sort((a, b) => (delta > 0 ? b.date.localeCompare(a.date) : a.date.localeCompare(b.date)))
-    for (const r of dorder) {
-      const nd = shift(r.date)
-      if (!nd || nd === r.date) continue
-      if (!isSupabase) {
-        r.date = nd
-      } else {
-        const { data, error } = await supabase.from('drive_days').update({ date: nd }).eq('id', r.id).select()
-        if (error) console.warn('[content] 迁移自驾日期失败:', error.message)
-        else if (data?.[0]) Object.assign(r, data[0])
-      }
-    }
-    // 评论 / 相册(按所属日迁移)
-    for (const key of ['comments', 'memories']) {
-      for (const r of rows[planId][key] || []) {
-        const nd = map.get(r.day_date)
-        if (!nd) continue
-        if (!isSupabase) {
-          r.day_date = nd
-        } else {
-          await supabase.from(TABLES[key]).update({ day_date: nd }).eq('id', r.id)
-          r.day_date = nd
+
+    const oldDayDates = await shiftList('days', 'route_days', daysData, daysHasData)
+    await shiftList('drive', 'drive_days', driveData, driveHasData)
+
+    // 评论 / 相册按天跟随
+    if (oldDayDates.size) {
+      for (const key of ['comments', 'memories']) {
+        for (const r of rows[plan.id][key] || []) {
+          if (!oldDayDates.has(r.day_date)) continue
+          const nd = addDays(r.day_date, delta)
+          if (!isSupabase) r.day_date = nd
+          else {
+            await supabase.from(TABLES[key]).update({ day_date: nd }).eq('id', r.id)
+            r.day_date = nd
+          }
         }
       }
     }
     if (!isSupabase) {
-      localDb.saveContent(planId, 'days', rows[planId].days)
-      localDb.saveContent(planId, 'drive', rows[planId].drive)
-      localDb.saveContent(planId, 'comments', rows[planId].comments)
-      localDb.saveContent(planId, 'memories', rows[planId].memories)
+      localDb.saveContent(plan.id, 'days', rows[plan.id].days)
+      localDb.saveContent(plan.id, 'drive', rows[plan.id].drive)
+      localDb.saveContent(plan.id, 'comments', rows[plan.id].comments)
+      localDb.saveContent(plan.id, 'memories', rows[plan.id].memories)
     }
-    return true
+    return Math.max(daysData.length, driveData.length)
   }
 
   // ------------------------------------------------------------
@@ -1671,7 +1690,7 @@ export const useContentStore = defineStore('content', () => {
     dropPlan,
     exportRows,
     importRows,
-    shiftDates,
+    alignDatesToPlan,
     addDestination,
     removeDestination,
     updateDayTitle,

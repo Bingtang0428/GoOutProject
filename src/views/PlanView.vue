@@ -110,7 +110,6 @@ function goSec(key) {
 // —— 计划内容载入 + 实时订阅(切计划时释放旧通道)
 // 覆盖三种场景:URL 直达(需先 init)、路由切换计划、计划日期区间被编辑
 let prevPlanId = null
-let lastStart = null
 
 /* 在线状态(谁在看这份计划) */
 const presence = usePresenceStore()
@@ -149,12 +148,9 @@ async function loadPlan() {
   if (prevPlanId && changedPlan) contentStore.detachRemote(prevPlanId)
   prevPlanId = plan.value.id
   await contentStore.ensureLoaded(plan.value)
-  // 同一计划内改了出发日期 → 把原有安排按天平移到新日期
-  if (!changedPlan && lastStart && lastStart !== plan.value.start_date) {
-    const moved = await contentStore.shiftDates(plan.value.id, lastStart, plan.value.start_date)
-    if (moved) toast('已把原有安排按天平移到新日期')
-  }
-  lastStart = plan.value.start_date
+  // 已有安排按顺序对齐到当前日期区间(改过出发/返程日期时把内容落到新日期)
+  const moved = await contentStore.alignDatesToPlan(plan.value)
+  if (moved) toast('已把原有安排按天对齐到新日期')
   await contentStore.ensureDayRows(plan.value) // 日期区间变化时补齐每日占位
   await contentStore.ensureDriveDayRows(plan.value) // 自驾规划同样按日占位
   contentStore.ensureStayVoteReminders(plan.value.id, plan.value.members || []) // 未定住宿自动提醒投票
