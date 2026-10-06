@@ -198,7 +198,7 @@ create table if not exists public.invite_codes (
 alter table public.invite_codes add column if not exists grants jsonb not null default '[]'::jsonb;
 
 -- 账号(注册时由邀请码验证建立;之后用昵称+密码登录,不再需要邀请码)
-create extension if not exists pgcrypto;
+create extension if not exists pgcrypto with schema extensions;
 
 create table if not exists public.accounts (
   id            uuid primary key default gen_random_uuid(),
@@ -211,7 +211,7 @@ create table if not exists public.accounts (
 
 -- ★ 注册:昵称 + 密码 + 邀请码(原子:校验码→扣次数→建账号→自动加入计划名单)
 create or replace function public.register_account(p_name text, p_password text, p_code text)
-returns jsonb language plpgsql security definer set search_path = public as $$
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 declare
   rec     public.invite_codes%rowtype;
   new_id  uuid;
@@ -265,7 +265,7 @@ end; $$;
 
 -- ★ 登录:昵称 + 密码(无邀请码)
 create or replace function public.login_account(p_name text, p_password text)
-returns jsonb language plpgsql security definer set search_path = public as $$
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 declare rec public.accounts%rowtype;
 begin
   select * into rec from public.accounts where name = p_name limit 1;
@@ -279,14 +279,14 @@ end; $$;
 
 -- ★ 后台:管理员重置成员密码
 create or replace function public.admin_set_password(p_id uuid, p_password text)
-returns void language plpgsql security definer set search_path = public as $$
+returns void language plpgsql security definer set search_path = public, extensions as $$
 begin
   update public.accounts set password_hash = crypt(p_password, gen_salt('bf', 10)) where id = p_id;
 end; $$;
 
 -- ★ 后台:删除成员(从所有计划名单中移出;仍为计划创建者则拒绝)
 create or replace function public.admin_delete_account(p_id uuid)
-returns jsonb language plpgsql security definer set search_path = public as $$
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 declare p plans%rowtype;
 begin
   if exists (select 1 from public.plans where owner_id = p_id::text) then
@@ -318,7 +318,7 @@ create or replace function public.claim_invite(p_code text, p_user jsonb)
 returns jsonb
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   rec public.invite_codes%rowtype;
