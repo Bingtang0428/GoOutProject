@@ -39,6 +39,7 @@ import TransitsSection from '@/components/sections/TransitsSection.vue'
 import PlanPermModal from '@/components/plan/PlanPermModal.vue'
 import ExportSheet from '@/components/plan/ExportSheet.vue'
 import PptSheet from '@/components/plan/PptSheet.vue'
+import GlobalSearch from '@/components/plan/GlobalSearch.vue'
 import ReportSheet from '@/components/plan/ReportSheet.vue'
 import { toast } from '@/composables/toast'
 import MemorySheet from '@/components/plan/MemorySheet.vue'
@@ -180,6 +181,7 @@ const showDelete = ref(false)
 const showPerm = ref(false)
 const showExport = ref(false)
 const showPpt = ref(false)
+const showSearch = ref(false)
 const showLogs = ref(false)
 const showReport = ref(false)
 const showMemory = ref(false)
@@ -248,6 +250,18 @@ async function doDelete() {
   router.replace('/')
 }
 
+async function doDuplicate() {
+  try {
+    const p = await plansStore.duplicatePlan(plan.value.id)
+    if (p) {
+      toast('已创建计划副本(含行程/食宿/待办等)')
+      router.push({ name: 'plan', params: { id: p.id } })
+    }
+  } catch {
+    toast('复制失败,请稍后重试', 'error')
+  }
+}
+
 const gradStyle = computed(() => {
   const [a, b] = pastelOf(plan.value?.gradient)
   return { '--vg1': a, '--vg2': b }
@@ -278,6 +292,9 @@ onBeforeUnmount(() => {
     <DesktopSidebar />
     <MobileTopNav :back="true" :title="plan.name" :subtitle="fmtRange(plan.start_date, plan.end_date)" @back="backHome">
       <template #actions>
+        <button class="icon-btn" aria-label="搜索" @click="showSearch = true">
+          <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+        </button>
         <button class="icon-btn" aria-label="导出行程单" @click="showExport = true">
           <i class="fa-solid fa-file-export" aria-hidden="true"></i>
         </button>
@@ -351,6 +368,9 @@ onBeforeUnmount(() => {
               <button class="btn btn-ghost btn-sm hero-surface" @click="showIssues = true">
                 <i class="fa-solid fa-stethoscope" aria-hidden="true"></i>体检
               </button>
+              <button class="btn btn-ghost btn-sm hero-surface" @click="showSearch = true">
+                <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>搜索
+              </button>
               <button class="btn btn-ghost btn-sm hero-surface" @click="showReport = true">
                 <i class="fa-solid fa-chart-pie" aria-hidden="true"></i>复盘
               </button>
@@ -365,6 +385,9 @@ onBeforeUnmount(() => {
               </button>
               <button v-if="isOwner" class="btn btn-ghost btn-sm hero-surface" @click="openEdit">
                 <i class="fa-solid fa-pen" aria-hidden="true"></i>编辑计划
+              </button>
+              <button v-if="isOwner" class="btn btn-ghost btn-sm hero-surface" @click="doDuplicate">
+                <i class="fa-solid fa-copy" aria-hidden="true"></i>复制计划
               </button>
               <button v-if="isOwner" class="btn btn-danger-soft btn-sm" @click="showDelete = true">
                 <i class="fa-solid fa-trash-can" aria-hidden="true"></i>删除
@@ -452,6 +475,7 @@ onBeforeUnmount(() => {
     <PlanPermModal v-if="canManage" v-model="showPerm" :plan="plan" />
     <ExportSheet v-model="showExport" :plan="plan" />
     <PptSheet v-model="showPpt" :plan="plan" />
+    <GlobalSearch v-model="showSearch" :plan="plan" @go="goSec" />
     <ReportSheet v-model="showReport" :plan="plan" />
     <MemorySheet v-model="showMemory" :plan="plan" :can-edit="canEdit" />
     <IssuesSheet v-model="showIssues" :plan="plan" />
@@ -503,6 +527,13 @@ onBeforeUnmount(() => {
           @click="showMore = false; openEdit()"
         >
           <i class="fa-solid fa-pen text-[18px] text-primary" aria-hidden="true"></i>编辑计划
+        </button>
+        <button
+          v-if="isOwner"
+          class="flex flex-col items-center gap-2 rounded-[14px] bg-surface-2/70 py-4 text-[13px] font-semibold text-ink-soft transition active:scale-95"
+          @click="showMore = false; doDuplicate()"
+        >
+          <i class="fa-solid fa-copy text-[18px] text-primary" aria-hidden="true"></i>复制计划
         </button>
         <button
           v-if="isOwner"

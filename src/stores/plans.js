@@ -124,10 +124,10 @@ export const usePlansStore = defineStore('plans', () => {
   const canEditContent = (plan) => {
     const r = myRole(plan)
     if (r === 'owner' || r === 'member') return true
-    // 管理员可协助维护任何计划的内容;已注册的参与者若尚未被加入名单,
-    // 也可编辑(名单同步由数据库注册函数自动完成)
+    // 管理员可协助维护任何计划的内容
     if (auth.user?.role === 'admin') return true
-    if (auth.user?.role === 'member') return true
+    // 演示模式:任何成员可编辑(便于体验内置种子计划);云端不再放开,防止越权编辑未加入的计划
+    if (!isSupabase && auth.user?.role === 'member') return true
     return false
   }
 
@@ -234,8 +234,73 @@ export const usePlansStore = defineStore('plans', () => {
     }
   }
 
-  async function removePlan(id) {
+  // 计划内容表(复制计划时一并复制)
+  const DUP_MAP = [
+    ['days', 'route_days'],
+    ['drive', 'drive_days'],
+    ['stays', 'stays'],
+    ['todos', 'todos'],
+    ['guides', 'guides'],
+    ['reminders', 'reminders'],
+    ['bills', 'bills'],
+    ['transits', 'transits'],
+    ['vehicle', 'vehicles'],
+    ['fuel', 'fuel_logs']
+  ]
+
+  /** 复制一份计划(含行程/食宿/待办等规划内容;不含评论与相册) */
+  async function duplicatePlan(id) {
+    const src = plans.value.find((p) => p.id === id)
+    if (!src) return null
+    const me = auth.user
+    const newId = isSupabase ? makeUuid() : uid()
+    const base = {
+      name: `${src.name} 副本`,
+      destination: src.destination || '',
+      start_city: src.start_city || '',
+      start_date: src.start_date,
+      end_date: src.end_date,
+      gradient: src.gradient ?? 0,
+      budget: src.budget ?? null,
+      currency: src.currency || 'CNY',
+      owner_id: me?.id || src.owner_id,
+      members: (src.members || []).slice(),
+      viewers: (src.viewers || []).slice()
+    }
     if (!isSupabase) {
+      const row = { ...base, id: newId }
+      const list = ensureLocal()
+      list.unshift(row)
+      localDb.savePlans(list)
+      plans.value = list.slice()
+      for (const [key] of DUP_MAP) {
+        const rows = localDb.loadContent(id, key).map((r) => ({ ...r, id: uid(), plan_id: newId }))
+        if (rows.length) localDb.saveContent(newId, key, rows)
+      }
+      setCurrent(newId)
+      return row
+    }
+    const { data, error } = await supabase.from('plans').insert({ id: newId, ...base }).select().single()
+    if (error) {
+      console.warn('[plans] 复制失败', error.message)
+      throw error
+    }
+    for (const [, table] of DUP_MAP) {
+      const { data: rows } = await supabase.from(table).select('*').eq('plan_id', id)
+      if (rows && rows.length) {
+        const copies = rows.map((r) => {
+          const { id: _id, created_at: _c, updated_at: _u, ...rest } = r
+          return { ...rest, id: makeUuid(), plan_id: newId }
+        })
+        await supabase.from(table).insert(copies)
+      }
+    }
+    plans.value.unshift(normalize(data))
+    setCurrent(newId)
+    return data
+  }
+
+  async function removePlan(id) {    if (!isSupabase) {
       const list = ensureLocal()
       const target = list.find((p) => p.id === id)
       // 演示模式:进回收站(可恢复),内容数据保留在原键上
@@ -384,6 +449,7 @@ export const usePlansStore = defineStore('plans', () => {
     setCurrent,
     createPlan,
     updatePlan,
+    duplicatePlan,
     removePlan,
     myRole,
     isManager,
