@@ -559,6 +559,73 @@ export const useContentStore = defineStore('content', () => {
     for (const r of data || []) applyById(planId, key, r)
   }
 
+  /**
+   * 计划起止日期整体平移:把已有安排(路线/自驾/评论/相册)按「同一偏移」挪到新日期。
+   * 依据开始日期的天数差 delta 平移,避免逐条丢失。
+   */
+  async function shiftDates(planId, oldStart, newStart) {
+    if (!oldStart || !newStart || oldStart === newStart) return false
+    const delta = Math.round((Date.parse(newStart + 'T00:00:00Z') - Date.parse(oldStart + 'T00:00:00Z')) / 86400000)
+    if (!delta) return false
+    ensureBucket(planId)
+    const shift = (d) => {
+      const t = new Date(d + 'T00:00:00Z')
+      t.setUTCDate(t.getUTCDate() + delta)
+      return t.toISOString().slice(0, 10)
+    }
+    const map = new Map()
+    const daysList = (rows[planId].days || []).slice()
+    for (const r of daysList) map.set(r.date, shift(r.date))
+
+    // 路线日:从远端往近端改,规避 (plan_id,date) 唯一约束的瞬时冲突
+    const ordered = daysList.sort((a, b) => (delta > 0 ? b.date.localeCompare(a.date) : a.date.localeCompare(b.date)))
+    for (const r of ordered) {
+      const nd = shift(r.date)
+      if (!nd || nd === r.date) continue
+      if (!isSupabase) {
+        r.date = nd
+      } else {
+        const { data, error } = await supabase.from('route_days').update({ date: nd }).eq('id', r.id).select()
+        if (error) console.warn('[content] 迁移路线日期失败:', error.message)
+        else if (data?.[0]) Object.assign(r, data[0])
+      }
+    }
+    // 自驾日
+    const driveList = (rows[planId].drive || []).slice()
+    const dorder = driveList.sort((a, b) => (delta > 0 ? b.date.localeCompare(a.date) : a.date.localeCompare(b.date)))
+    for (const r of dorder) {
+      const nd = shift(r.date)
+      if (!nd || nd === r.date) continue
+      if (!isSupabase) {
+        r.date = nd
+      } else {
+        const { data, error } = await supabase.from('drive_days').update({ date: nd }).eq('id', r.id).select()
+        if (error) console.warn('[content] 迁移自驾日期失败:', error.message)
+        else if (data?.[0]) Object.assign(r, data[0])
+      }
+    }
+    // 评论 / 相册(按所属日迁移)
+    for (const key of ['comments', 'memories']) {
+      for (const r of rows[planId][key] || []) {
+        const nd = map.get(r.day_date)
+        if (!nd) continue
+        if (!isSupabase) {
+          r.day_date = nd
+        } else {
+          await supabase.from(TABLES[key]).update({ day_date: nd }).eq('id', r.id)
+          r.day_date = nd
+        }
+      }
+    }
+    if (!isSupabase) {
+      localDb.saveContent(planId, 'days', rows[planId].days)
+      localDb.saveContent(planId, 'drive', rows[planId].drive)
+      localDb.saveContent(planId, 'comments', rows[planId].comments)
+      localDb.saveContent(planId, 'memories', rows[planId].memories)
+    }
+    return true
+  }
+
   // ------------------------------------------------------------
   // 路线
   // ------------------------------------------------------------
@@ -1604,6 +1671,7 @@ export const useContentStore = defineStore('content', () => {
     dropPlan,
     exportRows,
     importRows,
+    shiftDates,
     addDestination,
     removeDestination,
     updateDayTitle,

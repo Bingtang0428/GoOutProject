@@ -110,6 +110,7 @@ function goSec(key) {
 // —— 计划内容载入 + 实时订阅(切计划时释放旧通道)
 // 覆盖三种场景:URL 直达(需先 init)、路由切换计划、计划日期区间被编辑
 let prevPlanId = null
+let lastStart = null
 
 /* 在线状态(谁在看这份计划) */
 const presence = usePresenceStore()
@@ -144,9 +145,16 @@ async function loadPlan() {
     return
   }
   plansStore.setCurrent(plan.value.id)
-  if (prevPlanId && prevPlanId !== plan.value.id) contentStore.detachRemote(prevPlanId)
+  const changedPlan = plan.value.id !== prevPlanId
+  if (prevPlanId && changedPlan) contentStore.detachRemote(prevPlanId)
   prevPlanId = plan.value.id
   await contentStore.ensureLoaded(plan.value)
+  // 同一计划内改了出发日期 → 把原有安排按天平移到新日期
+  if (!changedPlan && lastStart && lastStart !== plan.value.start_date) {
+    const moved = await contentStore.shiftDates(plan.value.id, lastStart, plan.value.start_date)
+    if (moved) toast('已把原有安排按天平移到新日期')
+  }
+  lastStart = plan.value.start_date
   await contentStore.ensureDayRows(plan.value) // 日期区间变化时补齐每日占位
   await contentStore.ensureDriveDayRows(plan.value) // 自驾规划同样按日占位
   contentStore.ensureStayVoteReminders(plan.value.id, plan.value.members || []) // 未定住宿自动提醒投票
@@ -409,7 +417,7 @@ onBeforeUnmount(() => {
                 <span v-if="logsUnread" class="h-1.5 w-1.5 rounded-full bg-rose"></span>
               </button>
               <Transition name="scale-in">
-                <div v-if="desktopMore" class="card absolute right-0 top-11 z-40 w-56 p-1.5 shadow-pop">
+                <div v-if="desktopMore" class="card absolute right-0 top-11 z-40 max-h-[70vh] w-56 overflow-y-auto overscroll-contain p-1.5 shadow-pop">
                   <button v-if="isSupabase" class="flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-[13.5px] text-ink-soft transition-colors hover:bg-surface-2" @click="desktopMore = false; openLogs()">
                     <i class="fa-solid fa-clock-rotate-left w-4 text-primary" aria-hidden="true"></i>最近动态
                     <span v-if="logsUnread" class="chip chip-rose ml-auto !px-1.5 !py-0 !text-[10px]">{{ logsUnread }}</span>
